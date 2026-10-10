@@ -16,15 +16,22 @@ export function repairJson(raw) {
     if (direct.ok) return direct.value;
     const start = s.indexOf('{');
     if (start >= 0) {
-        let depth = 0, inStr = false, esc = false;
-        for (let i = start; i < s.length; i++) {
-            const ch = s[i];
-            if (esc) { esc = false; continue; }
-            if (ch === '\\') { esc = true; continue; }
-            if (ch === '"') inStr = !inStr;
-            if (inStr) continue;
-            if (ch === '{') depth++;
-            else if (ch === '}') { depth--; if (depth === 0) { const slice = tryParse(s.slice(start, i + 1)); if (slice.ok) return slice.value; break; } }
+        let from = start;
+        while (from >= 0) {
+            let depth = 0, inStr = false, esc = false, end = -1;
+            for (let i = from; i < s.length; i++) {
+                const ch = s[i];
+                if (esc) { esc = false; continue; }
+                if (ch === '\\') { esc = true; continue; }
+                if (ch === '"') inStr = !inStr;
+                if (inStr) continue;
+                if (ch === '{') depth++;
+                else if (ch === '}') { depth--; if (depth === 0) { end = i; break; } }
+            }
+            if (end === -1) break;
+            const slice = tryParse(s.slice(from, end + 1));
+            if (slice.ok) return slice.value;
+            from = s.indexOf('{', end + 1);
         }
     }
     const cleaned = s
@@ -93,7 +100,7 @@ export function parseDiegeticResponse(raw, { maxBytes = 32768, maxCount = 5 } = 
     for (let ci = 0; ci < comments.length; ci++) {
         const cm = comments[ci];
         const meta = repairJson(cm[1]);
-        if (!meta || typeof meta !== 'object') { errors.push(`bad meta JSON near index ${cm.index}`); continue; }
+        if (!meta || typeof meta !== 'object' || Array.isArray(meta)) { errors.push(`bad meta JSON near index ${cm.index}`); continue; }
         if (meta.pulse === false) { sawPulseFalse = true; continue; }
         const segStart = (cm.index ?? 0) + cm[0].length;
         const segEnd = ci + 1 < comments.length ? (comments[ci + 1].index ?? text.length) : text.length;

@@ -9,7 +9,8 @@ export function buildGenerateConfig({ prompt, profile, contextDepth, generationI
     const cfg = {
         user_input: String(prompt ?? ''),
         max_chat_history: Math.max(1, Number(contextDepth) || 1),
-        generation_id: String(generationId ?? ''),
+        // undefined, не '': раннер подменяет falsy generation_id своим uuid — undefined честнее.
+        generation_id: generationId == null || generationId === '' ? undefined : String(generationId),
         should_stream: false,
         should_silence: true,
     };

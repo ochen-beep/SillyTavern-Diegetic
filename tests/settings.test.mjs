@@ -36,3 +36,16 @@ test('loadSettings переживает битый JSON в хранилище', 
   const s = loadSettings(storage);
   assert.equal(s.enabled, DEFAULT_SETTINGS.enabled);
 });
+
+test('round-trip кастомного профиля через save/load', () => {
+  const backing = {};
+  const storage = { get: () => backing.s, set: (v) => { backing.s = v; } };
+  const s = normalizeSettings({ profiles: [{ id: 'pro', name: 'Pro', source: 'custom', sourceConfig: { apiurl: 'https://x/v1', key: 'sk-1', model: 'm' } }], activeProfile: 'pro' });
+  saveSettings(storage, s);
+  const loaded = loadSettings(storage);
+  const p = loaded.profiles.find(x => x.id === 'pro');
+  assert.ok(p, 'профиль пережил round-trip');
+  assert.equal(p.source, 'custom');
+  assert.equal(p.sourceConfig.key, 'sk-1');
+  assert.equal(loaded.activeProfile, 'pro');
+});

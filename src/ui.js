@@ -30,7 +30,7 @@ const CSS = `
 
 // type/status приходят из вывода модели, name/id — из dg_settings, исключения пишет пользователь:
 // всё это попадает в parent-document через .html() — интерполируем только через esc.
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export function mountPanel(deps) {
     const $ = deps.$;

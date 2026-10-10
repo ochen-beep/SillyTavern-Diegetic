@@ -25,7 +25,7 @@ export function normalizeSettings(input) {
         ? raw.profiles.filter(p => p && typeof p === 'object' && p.id).map(p => ({
             id: String(p.id), name: String(p.name || p.id),
             source: p.source === 'custom' ? 'custom' : 'current',
-            sourceConfig: p.sourceConfig && typeof p.sourceConfig === 'object' ? p.sourceConfig : null,
+            sourceConfig: p.sourceConfig && typeof p.sourceConfig === 'object' ? { ...p.sourceConfig } : null,
         }))
         : [];
     const profiles = cleaned.length > 0 ? cleaned : DEFAULT_SETTINGS.profiles.map(p => ({ ...p }));

@@ -14,6 +14,11 @@ test('contentDigest: NFC-normalizes (комбинированная == прек�
   assert.equal(contentDigest('е\u0308'), contentDigest('ё'));
 });
 
+test('contentDigest: разные тексты → разные дайджесты', () => {
+  assert.notEqual(contentDigest('а'), contentDigest('б'));
+  assert.notEqual(contentDigest('Привет'), contentDigest('Пока'));
+});
+
 test('contentDigest: empty → empty string', () => {
   assert.equal(contentDigest(''), '');
   assert.equal(contentDigest(null), '');

@@ -13,8 +13,8 @@ export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (контракт �
 (шум, градиенты, тени). Артефакт должен выглядеть как предмет из реальности: iMessage —
 как iOS дословно, телеграмма — как бланк со штампами.
 
-**Диегетичность:** артефакты триггерятся нарративом, а не украшают его. Никогда не
-начинай и не заканчивай пост артефактом. Не дублируй смысл поста — артефакт показывает
+**Диегетичность:** артефакты триггерятся нарративом, а не украшают его. Не выбирай anchor
+в первом или последнем предложении поста. Не дублируй смысл поста — артефакт показывает
 то, что персонаж ВИДИТ НА ЭКРАНЕ/В РУКАХ.
 
 **Язык:** весь текст артефакта — на {{getvar::narlng}}.
@@ -31,16 +31,14 @@ export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (контракт �
   \`<!--DIEGETIC {"pulse":false}-->\` и ничего больше.`;
 
 export function assemblePrompt({ lensText, postText, contextBlock = '', maxCount = 1 }) {
+    maxCount = Math.max(1, Math.min(5, Number(maxCount) || 1));
     const lens = String(lensText ?? '');
     const withContract = lens.includes('{{CONTRACT}}')
-        ? lens.replace('{{CONTRACT}}', DIEGETIC_CONTRACT)
+        ? lens.replaceAll('{{CONTRACT}}', DIEGETIC_CONTRACT)
         : lens.trim() + '\n\n' + DIEGETIC_CONTRACT;
     const filled = withContract.replace(/\{\{MAX_COUNT\}\}/gu, String(maxCount));
-    return [
-        filled.trim(),
-        '',
-        '### Источник анализа',
-        contextBlock ? `Контекст предыдущих сообщений:\n${contextBlock}\n` : '',
-        `Пост (найди импульсы в нём):\n${postText}`,
-    ].filter(Boolean).join('\n');
+    const tail = contextBlock
+        ? `### Источник анализа\nКонтекст предыдущих сообщений:\n${contextBlock}\n\nПост (найди импульсы в нём):\n${postText}`
+        : `### Источник анализа\nПост (найди импульсы в нём):\n${postText}`;
+    return [filled.trim(), '', tail].join('\n');
 }

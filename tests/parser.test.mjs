@@ -75,3 +75,10 @@ test('мусор вместо ответа — errors + pulse true не утве
   assert.equal(r.artifacts.length, 0);
   assert.ok(r.errors.length >= 1);
 });
+
+test('CRLF: фенс с \\r\\n парсится', () => {
+  const crlf = '<!--DIEGETIC {"pulse":true,"type":"phone","anchor":"x"}-->\r\n```html\r\n<body><p>1</p></body>\r\n```';
+  const r = parseDiegeticResponse(crlf, {});
+  assert.equal(r.artifacts.length, 1);
+  assert.equal(r.artifacts[0].html, '<body><p>1</p></body>');
+});

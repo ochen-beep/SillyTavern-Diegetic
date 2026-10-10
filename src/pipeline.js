@@ -7,6 +7,8 @@ import { assemblePrompt } from './contract.js';
 import { buildGenerateConfig, generationIdFor } from './source.js';
 import { META_KEY, recordArtifacts, removeDigest } from './meta.js';
 
+const byteLength = (s) => new TextEncoder().encode(s).length;
+
 export function createPipeline(deps) {
     const { api, notify, getContextBlock } = deps;
 
@@ -18,7 +20,7 @@ export function createPipeline(deps) {
         return Array.isArray(list) ? list[0] : null;
     };
 
-    async function run(messageId, { force = false } = {}) {
+    async function _run(messageId, { force = false } = {}) {
         const s = deps.settings;
         if (!s.enabled) return;
         const msg = await getMsg(messageId);
@@ -37,7 +39,8 @@ export function createPipeline(deps) {
             const prompt = assemblePrompt({
                 lensText: profile.lensText ?? '',
                 postText: prose,
-                contextBlock: getContextBlock ? getContextBlock(messageId, s.contextDepth) : '',
+                // await: провайдер контекста может быть асинхронным; на синхронном await безвреден
+                contextBlock: getContextBlock ? await getContextBlock(messageId, s.contextDepth) : '',
                 maxCount: s.maxPerMessage,
             });
             let raw;
@@ -58,9 +61,12 @@ export function createPipeline(deps) {
                     const liveText = String(live?.message ?? '');
                     if (hasOwnBlock(liveText)) {
                         const stripped = stripOwnBlocks(liveText);
-                        // read-modify-write без await: синхронный блок, атомарен в JS-однопоточности
+                        // живой recheck прозы: изменилась, пока шла генерация — отменяем
+                        if (contentDigest(stripped) !== proseDigest) return;
+                        // insertOrAssignVariables раннера — глубокий merge БЕЗ удаления ключей,
+                        // поэтому «снимаем» запись, перезаписывая её пустым списком артефактов.
                         const vars = chatVars();
-                        const next = removeDigest(vars, contentDigest(stripped));
+                        const next = recordArtifacts(vars, contentDigest(stripped), []);
                         writeVars(next);
                         await api.setChatMessages([{ message_id: Number(messageId), message: stripped }], { refresh: 'affected' });
                         notify.ready('Diegetic: импульса нет — артефакт(ы) сняты');
@@ -104,7 +110,7 @@ export function createPipeline(deps) {
             if (force) vars = removeDigest(vars, proseDigest);
             vars = recordArtifacts(vars, proseDigest, recorded.map((a, i) => ({
                 id: `${proseDigest}:${i}`, type: a.type, anchor: a.anchor, status: a.status,
-                bytes: a.html.length, createdAt: Date.now(), profileId: profile.id,
+                bytes: byteLength(a.html), createdAt: Date.now(), profileId: profile.id,
             })));
             writeVars(vars);
 
@@ -119,5 +125,8 @@ export function createPipeline(deps) {
         }
     }
 
-    return { run };
+    // run() никогда не реджектится: обработчики событий fire-and-forget —
+    // необработанный rejection из getMsg/setChatMessages умер бы молча.
+    return { run: (messageId, opts = {}) =>
+        _run(messageId, opts).catch((e) => notify.error(`Diegetic: сбой (${e?.message || e})`)) };
 }

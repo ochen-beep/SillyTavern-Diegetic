@@ -14,6 +14,16 @@ function makeDeps({ raw = RESP, role = 'assistant', message = PROSE, failGen = f
     const messages = { 0: { message_id: 0, role, message, swipes: [message], swipe_id: 0 } };
     const chatVars = {};
     const notifications = [];
+    // insertOrAssignVariables реального раннера — глубокий merge (lodash mergeWith):
+    // объекты сливаются рекурсивно, массивы заменяются целиком, отсутствующие ключи сохраняются.
+    const deepAssign = (target, source) => {
+        for (const [k, v] of Object.entries(source)) {
+            const cur = target[k];
+            if (v && typeof v === 'object' && !Array.isArray(v) && cur && typeof cur === 'object' && !Array.isArray(cur)) deepAssign(cur, v);
+            else target[k] = v; // массивы и скаляры → rhs
+        }
+        return target;
+    };
     const api = {
         getChatMessages: (range) => {
             if (String(range) === '0') return [messages[0]];
@@ -25,13 +35,12 @@ function makeDeps({ raw = RESP, role = 'assistant', message = PROSE, failGen = f
         },
         generateRaw: async (cfg) => { if (failGen) throw new Error('api down'); return raw; },
         getVariables: () => chatVars,
-        insertOrAssignVariables: (vars) => { Object.assign(chatVars, vars); },
+        insertOrAssignVariables: (vars) => deepAssign(chatVars, vars),
     };
     const deps = {
         api,
         settings: { ...DEFAULT_SETTINGS },
         coordinator: createGenerationCoordinator(),
-        profile: () => DEFAULT_SETTINGS.profiles[0],
         notify: { ready: (n) => notifications.push(['ready', n]), error: (m) => notifications.push(['error', m]) },
         getContextBlock: () => '',
     };
@@ -114,7 +123,7 @@ test('регенерация: старые блоки сняты, новые в�
 });
 
 test('force + pulse=false: старые блоки сняты, уведомление', async () => {
-  const { deps, messages, notifications } = makeDeps();
+  const { deps, messages, chatVars, notifications } = makeDeps();
   const p = createPipeline(deps);
   await p.run(0);
   assert.ok(messages[0].message.includes('<body>'));
@@ -122,4 +131,37 @@ test('force + pulse=false: старые блоки сняты, уведомле�
   await p.run(0, { force: true });
   assert.equal(messages[0].message, PROSE);
   assert.ok(notifications.some(([, m]) => m.includes('сняты')));
+  // глубокий merge раннера не удаляет ключи: запись очищается (artifacts: []), а не исчезает
+  const cleared = chatVars[META_KEY][contentDigest(PROSE)];
+  assert.ok(cleared, 'digest-запись должна остаться в карте');
+  assert.deepEqual(cleared.artifacts, []);
+});
+
+test('abort mid-flight: stopGenerationById вызван с generation_id прогона', async () => {
+  const { deps, messages, api } = makeDeps();
+  const stopIds = [];
+  let resolveGen;
+  deps.api = {
+    ...api,
+    generateRaw: () => new Promise((res) => { resolveGen = res; }),
+    stopGenerationById: (id) => stopIds.push(id),
+  };
+  const p = createPipeline(deps);
+  const runPromise = p.run(0);
+  await new Promise((r) => setTimeout(r, 0)); // даём прогону дойти до generateRaw
+  deps.coordinator.bumpMessageRevision(0);   // абортит контроллер текущего прогона
+  assert.equal(stopIds.length, 1);
+  assert.match(stopIds[0], /^diegetic:0:\d+$/);
+  resolveGen(RESP);                          // завершаем висящий вызов, прогон увидит не-current
+  await runPromise;
+  assert.equal(messages[0].message, PROSE);  // абортнутый прогон ничего не записал
+});
+
+test('happy path: setChatMessages получает refresh=affected', async () => {
+  const { deps, api } = makeDeps();
+  const calls = [];
+  deps.api = { ...api, setChatMessages: async (...args) => { calls.push(args); } };
+  await createPipeline(deps).run(0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][1], { refresh: 'affected' });
 });

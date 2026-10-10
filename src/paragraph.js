@@ -27,7 +27,8 @@ export function paragraphEndAfter(text, from) {
 
 /**
  * Вставить html-блоки в точки `at` одним проходом (точки сортируются по убыванию,
- * соседние вставки в одну точку сохраняют порядок массива). Возвращает
+ * вставки в одну точку сохраняют порядок массива В ИТОГОВОМ ТЕКСТЕ (равные точки
+ * обходятся в обратном порядке массива)). Возвращает
  * { text, points } или null, если наши блоки уже в тексте (идемпотентность).
  */
 export function applyInsertions(text, insertions) {
@@ -37,7 +38,7 @@ export function applyInsertions(text, insertions) {
     const fenceOf = (html) => '```html\n' + String(html).trim() + '\n```';
     const sorted = insertions
         .map((ins, order) => ({ ...ins, order }))
-        .sort((a, b) => (b.at - a.at) || (a.order - b.order));
+        .sort((a, b) => (b.at - a.at) || (b.order - a.order));
     let out = s;
     for (const ins of sorted) {
         const block = '\n\n' + fenceOf(ins.html);

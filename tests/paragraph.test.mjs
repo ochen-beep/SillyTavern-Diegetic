@@ -38,6 +38,11 @@ test('applyInsertions: несколько вставок одним проход
   assert.ok(res.text.indexOf('<body>a</body>') < res.text.indexOf('<body>b</body>'));
 });
 
+test('applyInsertions: вставки в одну точку сохраняют порядок массива в итоговом тексте', () => {
+  const res = applyInsertions('X.', [{ at: 2, html: '<body>a</body>' }, { at: 2, html: '<body>b</body>' }]);
+  assert.ok(res.text.indexOf('<body>a</body>') < res.text.indexOf('<body>b</body>'));
+});
+
 test('applyInsertions: null если блок уже есть (идемпотентность)', () => {
   assert.equal(applyInsertions(`текст\n\n${ART}`, [{ at: 5, html: '<body>x</body>' }]), null);
 });

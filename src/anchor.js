@@ -56,6 +56,7 @@ export function normalizedWithMap(value) {
             units.push({ ch: ' ', start: pendingSpace.start, end: pendingSpace.end });
             pendingSpace = null;
         }
+        // deviation from Glosses: expand astral chars per code unit so map aligns with indexOf offsets
         for (const ch of normalized) {
             for (let u = 0; u < ch.length; u++) units.push({ ch: ch[u], start: part.start, end: part.end });
         }

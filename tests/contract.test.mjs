@@ -41,3 +41,11 @@ test('round-trip: литерал pulse:false из контракта → pulse f
   assert.equal(r.pulse, false);
   assert.equal(r.artifacts.length, 0);
 });
+
+test('round-trip: pulse:false литерал ИЗ контракта парсится', () => {
+  const m = DIEGETIC_CONTRACT.match(/<!--DIEGETIC \{"pulse":false\}-->/);
+  assert.ok(m, 'в контракте обязан быть литерал pulse:false');
+  const r = parseDiegeticResponse(m[0], {});
+  assert.equal(r.pulse, false);
+  assert.equal(r.artifacts.length, 0);
+});

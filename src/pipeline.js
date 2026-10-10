@@ -50,7 +50,24 @@ export function createPipeline(deps) {
             if (!deps.coordinator.isCurrent(run)) return;
 
             const parsed = parseDiegeticResponse(raw, { maxBytes: s.maxArtifactBytes, maxCount: s.maxPerMessage });
-            if (parsed.pulse === false) return;
+            if (parsed.pulse === false) {
+                if (force) {
+                    // явная регенерация + «импульса нет»: снимаем устаревшие артефакты
+                    const live = await getMsg(messageId);
+                    if (!deps.coordinator.isCurrent(run)) return;
+                    const liveText = String(live?.message ?? '');
+                    if (hasOwnBlock(liveText)) {
+                        const stripped = stripOwnBlocks(liveText);
+                        // read-modify-write без await: синхронный блок, атомарен в JS-однопоточности
+                        const vars = chatVars();
+                        const next = removeDigest(vars, contentDigest(stripped));
+                        writeVars(next);
+                        await api.setChatMessages([{ message_id: Number(messageId), message: stripped }], { refresh: 'affected' });
+                        notify.ready('Diegetic: импульса нет — артефакт(ы) сняты');
+                    }
+                }
+                return;
+            }
             if (parsed.artifacts.length === 0) {
                 notify.error(`Diegetic: модель не вернула артефактов (${parsed.errors[0] || 'нет пар комментарий+fence'})`);
                 return;

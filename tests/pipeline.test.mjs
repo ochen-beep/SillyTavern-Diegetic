@@ -112,3 +112,14 @@ test('регенерация: старые блоки сняты, новые в�
   assert.ok(messages[0].message.includes('<body>new</body>'));
   assert.ok(!messages[0].message.includes('<p>phone</p>'));
 });
+
+test('force + pulse=false: старые блоки сняты, уведомление', async () => {
+  const { deps, messages, notifications } = makeDeps();
+  const p = createPipeline(deps);
+  await p.run(0);
+  assert.ok(messages[0].message.includes('<body>'));
+  deps.api.generateRaw = async () => '<!--DIEGETIC {"pulse":false}-->';
+  await p.run(0, { force: true });
+  assert.equal(messages[0].message, PROSE);
+  assert.ok(notifications.some(([, m]) => m.includes('сняты')));
+});

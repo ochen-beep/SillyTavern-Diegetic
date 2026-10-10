@@ -9,6 +9,15 @@ import { META_KEY, recordArtifacts, removeDigest } from './meta.js';
 
 const byteLength = (s) => new TextEncoder().encode(s).length;
 
+/** Чистая: true, если хоть одна фраза-исключение встречена в прозе (нормализованно, подстрокой). */
+export function isExcluded(prose, phrases) {
+    const norm = String(prose ?? '').normalize('NFC').toLowerCase();
+    return (Array.isArray(phrases) ? phrases : []).some(p => {
+        const needle = String(p ?? '').trim().normalize('NFC').toLowerCase();
+        return needle.length > 0 && norm.includes(needle);
+    });
+}
+
 export function createPipeline(deps) {
     const { api, notify, getContextBlock } = deps;
 

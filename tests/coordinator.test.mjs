@@ -35,3 +35,13 @@ test('invalidateAll инвалидирует всё (смена чата)', () =
   assert.equal(c.isCurrent(a), false);
   assert.equal(a.ctrl.signal.aborted, true);
 });
+
+test('endRun сменённого прогона не трогает слот преемника', () => {
+  const c = createGenerationCoordinator();
+  const r1 = c.beginRun(1);
+  const r2 = c.beginRun(1);
+  assert.equal(c.endRun(r1), false);
+  assert.equal(c.isCurrent(r2), true);
+  assert.equal(c.endRun(r2), true);
+  assert.equal(c.isCurrent(r2), false);
+});

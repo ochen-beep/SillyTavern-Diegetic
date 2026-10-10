@@ -1,7 +1,7 @@
 // tests/pipeline.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPipeline } from '../src/pipeline.js';
+import { createPipeline, isExcluded } from '../src/pipeline.js';
 import { createGenerationCoordinator } from '../src/coordinator.js';
 import { DEFAULT_SETTINGS } from '../src/settings.js';
 import { META_KEY } from '../src/meta.js';
@@ -164,4 +164,10 @@ test('happy path: setChatMessages получает refresh=affected', async () =
   await createPipeline(deps).run(0);
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0][1], { refresh: 'affected' });
+});
+
+test('isExcluded: подстрока без учёта регистра/кавычек, пустые фразы игнорируются', () => {
+  assert.equal(isExcluded('Он сказал: «Стой!» и ушёл.', ['стой']), true);
+  assert.equal(isExcluded('Спокойная сцена.', ['СТОЙ', '']), false);
+  assert.equal(isExcluded('Что-то.', []), false);
 });

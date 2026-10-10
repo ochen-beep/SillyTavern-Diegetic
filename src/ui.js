@@ -57,7 +57,6 @@ function getLauncherHost(doc) {
 /** Наблюдатель за пересборкой #send_form (ST пересоздаёт его при смене чата) —
  *  модульного уровня: защищает от двойного observer при повторном mount. */
 let qrObserver = null;
-let qrDebounce = null;
 
 export function mountPanel(deps) {
     const $ = deps.$;
@@ -160,8 +159,10 @@ export function mountPanel(deps) {
     if (!qrObserver) {
         const target = doc.getElementById('send_form') || doc.documentElement;
         qrObserver = new MutationObserver(() => {
-            if (qrDebounce) clearTimeout(qrDebounce);
-            qrDebounce = setTimeout(() => { qrDebounce = null; remountQr(); }, 200);
+            // Без debounce: колбэк обсёрвера — микротаск, троттлинг таймеров
+            // скрытого iframe его не задерживает (setTimeout здесь превращал
+            // мгновенный remount в минуту ожидания). remountQr идемпотентен и O(1).
+            remountQr();
         });
         qrObserver.observe(target, { childList: true, subtree: true });
     }

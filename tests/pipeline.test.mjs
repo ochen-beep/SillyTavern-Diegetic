@@ -110,6 +110,17 @@ test('выключено настройкой: выход', async () => {
   assert.equal(called, false);
 });
 
+test('выключено + force: ручная генерация работает, артефакт вставлен', async () => {
+  const { deps, messages, chatVars, api } = makeDeps();
+  let called = false;
+  deps.settings = { ...DEFAULT_SETTINGS, enabled: false };
+  deps.api = { ...api, generateRaw: async () => { called = true; return RESP; } };
+  await createPipeline(deps).run(0, { force: true });
+  assert.equal(called, true);
+  assert.match(messages[0].message, /```html\n<body><p>phone<\/p><\/body>\n```/);
+  assert.ok(chatVars[META_KEY][contentDigest(PROSE)].artifacts.length === 1);
+});
+
 test('регенерация: старые блоки сняты, новые вставлены', async () => {
   const { deps, messages } = makeDeps();
   const p = createPipeline(deps);

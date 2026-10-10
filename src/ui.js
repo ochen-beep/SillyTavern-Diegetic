@@ -51,12 +51,35 @@ export function mountPanel(deps) {
             <button class="dg-regen" data-digest="${r.digest}">⟳</button>
             <button class="dg-del" data-digest="${r.digest}">✕</button>
           </div>`).join('');
-        const profiles = deps.settings().profiles
-            .map(p => `<option value="${esc(p.id)}" ${p.id === deps.settings().activeProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+        const st = deps.settings();
+        const profiles = st.profiles
+            .map(p => `<option value="${esc(p.id)}" ${p.id === st.activeProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+        const active = st.profiles.find(p => p.id === st.activeProfile) || st.profiles[0];
         $('#dg-panel').html(`
           <h3>Diegetic</h3>
-          <div><label><input type="checkbox" id="dg-enabled" ${deps.settings().enabled ? 'checked' : ''}/> включено</label></div>
-          <div>Профиль: <select id="dg-profile">${profiles}</select></div>
+          <div><label><input type="checkbox" id="dg-enabled" ${st.enabled ? 'checked' : ''}/> включено</label></div>
+          <h3>Профили</h3>
+          <div><select id="dg-profile">${profiles}</select></div>
+          <div style="margin-top:6px">
+            <label for="dg-lens">Линза активного профиля</label>
+            <textarea id="dg-lens" rows="8" style="width:100%">${esc(active?.lensText || '')}</textarea>
+            <div style="opacity:.7">вставь содержимое .md из templates/</div>
+            <button id="dg-save-lens">Сохранить линзу</button>
+          </div>
+          <div style="margin-top:6px">
+            <label>Новый профиль</label><br/>
+            <input id="dg-newname" placeholder="имя" style="width:100%"/>
+            <select id="dg-newsource">
+              <option value="current">current</option>
+              <option value="custom">custom</option>
+            </select>
+            <div id="dg-custom-fields" style="display:none">
+              <input id="dg-apiurl" placeholder="apiurl (https://…/v1)" style="width:100%"/>
+              <input id="dg-key" placeholder="key" style="width:100%"/>
+              <input id="dg-model" placeholder="model" style="width:100%"/>
+            </div>
+            <button id="dg-add-profile">Добавить</button>
+          </div>
           <h3>Артефакты чата</h3>
           <div id="dg-list">${items || '<i>пока пусто</i>'}</div>
           <h3>Ручная генерация</h3>
@@ -68,7 +91,23 @@ export function mountPanel(deps) {
 
     $(document).on('click.diegetic', '#dg-fab', () => { $('#dg-panel').toggle(); render(); });
     $(document).on('click.diegetic', '#dg-enabled', (e) => { deps.setEnabled(e.target.checked); render(); });
-    $(document).on('change.diegetic', '#dg-profile', (e) => { deps.setActiveProfile(e.target.value); });
+    $(document).on('change.diegetic', '#dg-profile', (e) => { deps.setActiveProfile(e.target.value); render(); });
+    $(document).on('click.diegetic', '#dg-save-lens', () => { deps.setLensText(String($('#dg-lens').val())); });
+    $(document).on('change.diegetic', '#dg-newsource', (e) => { $('#dg-custom-fields').toggle($(e.target).val() === 'custom'); });
+    $(document).on('click.diegetic', '#dg-add-profile', () => {
+        const name = String($('#dg-newname').val() || '').trim();
+        if (!name) return;
+        deps.addProfile({
+            name,
+            source: String($('#dg-newsource').val()),
+            apiurl: String($('#dg-apiurl').val() || ''),
+            key: String($('#dg-key').val() || ''),
+            model: String($('#dg-model').val() || ''),
+        });
+        $('#dg-newname').val(''); $('#dg-apiurl').val(''); $('#dg-key').val(''); $('#dg-model').val('');
+        $('#dg-custom-fields').hide();
+        render(); // добавленный профиль становится активным — селект и линза перечитаются
+    });
     $(document).on('click.diegetic', '#dg-manual', () => {
         const id = Number($('#dg-msgid').val());
         if (Number.isFinite(id)) deps.pipeline.run(id, { force: true });

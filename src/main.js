@@ -48,7 +48,9 @@ import { mountPanel, attachOverlay } from './ui.js';
         const to = Number(messageId) - 1;
         if (to < from) return '';
         const list = api.getChatMessages(`${from}-${to}`) || [];
-        return list.map(m => `${m.role === 'assistant' ? 'ИИ' : m.name || 'Пользователь'}: ${String(m.message ?? '').slice(0, 400)}`).join('\n---\n');
+        // proseOf: убираем наши ```html-блоки — иначе прошлые артефакты дублируются
+        // в max_chat_history и загрязняют вызов контракта
+        return list.map(m => `${m.role === 'assistant' ? 'ИИ' : m.name || 'Пользователь'}: ${proseOf(m).slice(0, 400)}`).join('\n---\n');
     };
 
     const pipeline = createPipeline({
@@ -72,6 +74,23 @@ import { mountPanel, attachOverlay } from './ui.js';
         settings: () => settings,
         setEnabled: (v) => { settings.enabled = v; save(); },
         setActiveProfile: (id) => { settings.activeProfile = id; save(); },
+        setLensText: (text) => {
+            const p = settings.profiles.find(x => x.id === settings.activeProfile) || settings.profiles[0];
+            if (p) p.lensText = String(text ?? '');
+            save();
+        },
+        addProfile: ({ name, source, apiurl, key, model }) => {
+            const id = `p${Date.now().toString(36)}`;
+            settings.profiles.push({
+                id,
+                name: String(name ?? '').trim() || 'Профиль',
+                source: source === 'custom' ? 'custom' : 'current',
+                sourceConfig: source === 'custom' ? { apiurl: String(apiurl ?? ''), key: String(key ?? ''), model: String(model ?? '') } : null,
+                lensText: '',
+            });
+            settings.activeProfile = id;
+            save(); // saveSettings прогоняет через normalizeSettings — форма записи канонизируется
+        },
         pipeline,
         regenByDigest: (digest) => {
             const list = api.getChatMessages('0-9999') || [];

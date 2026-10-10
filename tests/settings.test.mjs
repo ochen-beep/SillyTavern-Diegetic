@@ -49,3 +49,14 @@ test('round-trip кастомного профиля через save/load', () =
   assert.equal(p.sourceConfig.key, 'sk-1');
   assert.equal(loaded.activeProfile, 'pro');
 });
+
+test('lensText переживает normalizeSettings и save/load round-trip', () => {
+  const backing = {};
+  const storage = { get: () => backing.s, set: (v) => { backing.s = v; } };
+  const s = normalizeSettings({ profiles: [{ id: 'a', name: 'A', source: 'current', lensText: '{{CONTRACT}}\nСтиль линзы' }], activeProfile: 'a' });
+  assert.equal(s.profiles[0].lensText, '{{CONTRACT}}\nСтиль линзы');
+  assert.equal(normalizeSettings({ profiles: [{ id: 'b', name: 'B' }] }).profiles[0].lensText, '', 'без lensText → пустая строка');
+  saveSettings(storage, s);
+  const loaded = loadSettings(storage);
+  assert.equal(loaded.profiles[0].lensText, '{{CONTRACT}}\nСтиль линзы');
+});

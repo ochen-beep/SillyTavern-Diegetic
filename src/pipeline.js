@@ -31,7 +31,8 @@ export function createPipeline(deps) {
 
     async function _run(messageId, { force = false } = {}) {
         const s = deps.settings;
-        if (!s.enabled) return;
+        // force (панель/оверлей) работает и при выключенном авторежиме — спека §10
+        if (!s.enabled && !force) return;
         const msg = await getMsg(messageId);
         if (!msg || msg.role !== 'assistant') return;
         const text = String(msg.message ?? '');

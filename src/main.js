@@ -107,7 +107,11 @@ import { mountPanel, attachOverlay } from './ui.js';
         metaForMessage,
     };
 
-    try { mountPanel(panelDeps); attachOverlay(panelDeps); } catch (e) { console.warn('[Diegetic] UI:', e); }
+    try {
+        const ui = mountPanel(panelDeps);
+        attachOverlay(panelDeps);
+        console.log('[Diegetic] UI смонтирован');
+    } catch (e) { console.warn('[Diegetic] UI:', e); }
 
     const ensureRegex = () => ensurePromptStripRegex(api).catch((e) => console.warn('[Diegetic] regex:', e));
     ensureRegex();

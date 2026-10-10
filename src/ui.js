@@ -1,6 +1,11 @@
 // src/ui.js
-// Работает в parent-document: глобальный $ скрипта раннера уже parent-jQuery
-// (JS-Slash-Runner src/iframe/parent_jquery.js: window.$ = window.parent.$).
+// ВАЖНО: скрипт работает в айфрейме раннера. Глобальный $ — это parent-jQuery
+// (JS-Slash-Runner src/iframe/parent_jquery.js: window.$ = window.parent.$),
+// поэтому $('body').append(...) попадает в документ SillyTavern. Но $(document)
+// внутри айфрейма — документ САМОГО айфрейма: делегированные обработчики,
+// навешанные через $(document).on(...), живут не в том документе и на клики
+// в интерфейсе ST не срабатывают. Поэтому весь нативный доступ к DOM и все
+// delegated-bind идут через parentDoc(); bare $(document) запрещён.
 import { readMetaMap } from './meta.js';
 
 /** Чистая: строки списка артефактов для панели. */
@@ -32,16 +37,51 @@ const CSS = `
 // всё это попадает в parent-document через .html() — интерполируем только через esc.
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+/** Документ интерфейса SillyTavern — родитель айфрейма скрипта. */
+const parentDoc = () => window.parent.document;
+
+/** QR-бар (#qr--bar); ST монтирует его внутри #send_form. */
+function getQuickReplyBar(doc) {
+    return doc.querySelector('#send_form #qr--bar')
+        || doc.getElementById('qr--bar')
+        || doc.querySelector('#send_form .qr--bar');
+}
+
+/** Куда крепить кнопку: стили .qr--button scoped к .qr--buttons — иначе кнопка
+ *  выпадает из flex-ряда бара. Паттерн расширения Glosses. */
+function getLauncherHost(doc) {
+    const qrBar = getQuickReplyBar(doc);
+    return qrBar ? (qrBar.querySelector('.qr--buttons') || qrBar) : null;
+}
+
+/** Наблюдатель за пересборкой #send_form (ST пересоздаёт его при смене чата) —
+ *  модульного уровня: защищает от двойного observer при повторном mount. */
+let qrObserver = null;
+let qrDebounce = null;
+
 export function mountPanel(deps) {
     const $ = deps.$;
-    $('#dg-panel, #dg-fab, #dg-style').remove();
-    // Перезагрузка скрипта раннера не снимает делегированные обработчики parent-document:
-    // без off второй mount задвоит их (#dg-fab переключит панель дважды — она не откроется).
-    $(document).off('.diegetic');
-    $('body').append(`<style id="dg-style">${CSS}</style>`);
-    $('body').append('<button id="dg-fab" title="Diegetic">◆</button>');
-    $('body').append('<div id="dg-panel" style="display:none"></div>');
+    const doc = parentDoc();
 
+    // 1. Idempotent-remount: перезагрузка скрипта не должна плодить дубли.
+    for (const id of ['dg-style', 'dg-panel', 'dg-fab', 'dg-qr-btn']) {
+        doc.getElementById(id)?.remove();
+    }
+
+    // 2. Стили — нативно в head parent-document.
+    const style = doc.createElement('style');
+    style.id = 'dg-style';
+    style.textContent = CSS;
+    doc.head.appendChild(style);
+
+    // 3. Панель — нативно в body parent-document, скрыта до первого toggle.
+    const panel = doc.createElement('div');
+    panel.id = 'dg-panel';
+    panel.style.display = 'none';
+    doc.body.appendChild(panel);
+
+    // type/status приходят из вывода модели, name/id — из dg_settings, исключения
+    // пишет пользователь — интерполируем только через esc.
     const render = () => {
         const rows = collectArtifacts(deps.getChatVars());
         const items = rows.map(r => `
@@ -55,7 +95,7 @@ export function mountPanel(deps) {
         const profiles = st.profiles
             .map(p => `<option value="${esc(p.id)}" ${p.id === st.activeProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
         const active = st.profiles.find(p => p.id === st.activeProfile) || st.profiles[0];
-        $('#dg-panel').html(`
+        $(panel).html(`
           <h3>Diegetic</h3>
           <div><label><input type="checkbox" id="dg-enabled" ${st.enabled ? 'checked' : ''}/> включено</label></div>
           <h3>Профили</h3>
@@ -89,12 +129,61 @@ export function mountPanel(deps) {
           <div><button id="dg-save-excl">Сохранить исключения</button></div>`);
     };
 
-    $(document).on('click.diegetic', '#dg-fab', () => { $('#dg-panel').toggle(); render(); });
-    $(document).on('click.diegetic', '#dg-enabled', (e) => { deps.setEnabled(e.target.checked); render(); });
-    $(document).on('change.diegetic', '#dg-profile', (e) => { deps.setActiveProfile(e.target.value); render(); });
-    $(document).on('click.diegetic', '#dg-save-lens', () => { deps.setLensText(String($('#dg-lens').val())); });
-    $(document).on('change.diegetic', '#dg-newsource', (e) => { $('#dg-custom-fields').toggle($(e.target).val() === 'custom'); });
-    $(document).on('click.diegetic', '#dg-add-profile', () => {
+    const toggle = () => {
+        panel.style.display = panel.style.display === 'none' ? '' : 'none';
+        render();
+    };
+
+    // 5. Кнопка в QR-баре (нативный DOM на parentDoc, паттерн Glosses).
+    const createQrButton = () => {
+        const btn = doc.createElement('div');
+        btn.id = 'dg-qr-btn';
+        btn.className = 'qr--button menu_button interactable';
+        btn.title = 'Diegetic';
+        btn.innerHTML = '<span aria-hidden="true"><i class="fa-solid fa-scroll"></i></span>';
+        btn.addEventListener('click', (e) => { e.preventDefault(); toggle(); });
+        return btn;
+    };
+    // Повторное подключение: reuse существующей кнопки по id (appendChild переносит).
+    const remountQr = () => {
+        const host = getLauncherHost(doc);
+        if (!host) return;
+        let btn = doc.getElementById('dg-qr-btn');
+        if (!btn) btn = createQrButton();
+        if (btn.parentElement !== host) host.appendChild(btn);
+    };
+    remountQr();
+
+    // 6. ST пересобирает #send_form при смене чата — перецепляем кнопку.
+    //    #send_form ленивый: пока его нет, наблюдаем documentElement (subtree
+    //    всё равно покрывает его появление — простота важнее оптимизации).
+    if (!qrObserver) {
+        const target = doc.getElementById('send_form') || doc.documentElement;
+        qrObserver = new MutationObserver(() => {
+            if (qrDebounce) clearTimeout(qrDebounce);
+            qrDebounce = setTimeout(() => { qrDebounce = null; remountQr(); }, 200);
+        });
+        qrObserver.observe(target, { childList: true, subtree: true });
+    }
+
+    // 4. FAB-фолбэк на случай отключённого Quick Replies — прямая привязка
+    //    (не delegation), работает независимо от документа.
+    const fab = doc.createElement('button');
+    fab.id = 'dg-fab';
+    fab.title = 'Diegetic';
+    fab.textContent = '◆';
+    fab.addEventListener('click', (e) => { e.preventDefault(); toggle(); });
+    doc.body.appendChild(fab);
+
+    // 7. Делегированные обработчики панели — ОДИН раз, в parent-document,
+    //    в namespace .diegetic (off перед bind: перезагрузка скрипта раннера
+    //    не снимает старые обработчики — без off второй mount задвоит их).
+    $(doc).off('.diegetic');
+    $(doc).on('click.diegetic', '#dg-enabled', (e) => { deps.setEnabled(e.target.checked); render(); });
+    $(doc).on('change.diegetic', '#dg-profile', (e) => { deps.setActiveProfile(e.target.value); render(); });
+    $(doc).on('click.diegetic', '#dg-save-lens', () => { deps.setLensText(String($('#dg-lens').val())); });
+    $(doc).on('change.diegetic', '#dg-newsource', (e) => { $('#dg-custom-fields').toggle($(e.target).val() === 'custom'); });
+    $(doc).on('click.diegetic', '#dg-add-profile', () => {
         const name = String($('#dg-newname').val() || '').trim();
         if (!name) return;
         deps.addProfile({
@@ -108,20 +197,22 @@ export function mountPanel(deps) {
         $('#dg-custom-fields').hide();
         render(); // добавленный профиль становится активным — селект и линза перечитаются
     });
-    $(document).on('click.diegetic', '#dg-manual', () => {
+    $(doc).on('click.diegetic', '#dg-manual', () => {
         const id = Number($('#dg-msgid').val());
         if (Number.isFinite(id)) deps.pipeline.run(id, { force: true });
     });
-    $(document).on('click.diegetic', '#dg-regen', (e) => deps.regenByDigest(String($(e.target).data('digest'))));
-    $(document).on('click.diegetic', '#dg-del', (e) => deps.deleteByDigest(String($(e.target).data('digest'))));
-    $(document).on('click.diegetic', '#dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
-    return { render };
+    $(doc).on('click.diegetic', '#dg-regen', (e) => deps.regenByDigest(String($(e.target).data('digest'))));
+    $(doc).on('click.diegetic', '#dg-del', (e) => deps.deleteByDigest(String($(e.target).data('digest'))));
+    $(doc).on('click.diegetic', '#dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
+
+    return { render, toggle };
 }
 
-/** ⟳-оверлей поверх .TH-render в сообщениях с нашими метаданными. */
+/** ⟳-оверлей поверх .TH-render в сообщениях с нашими метаданными.
+ *  .mes живёт в parent-document — delegated-bind тоже туда. */
 export function attachOverlay(deps) {
     const $ = deps.$;
-    $(document).on('mouseenter.diegetic', '.mes', function () {
+    $(parentDoc()).on('mouseenter.diegetic', '.mes', function () {
         const $mes = $(this);
         const msgId = $mes.attr('mesid');
         if (msgId === undefined || $mes.find('.dg-overlay-btn').length) return;

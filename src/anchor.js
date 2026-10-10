@@ -56,7 +56,9 @@ export function normalizedWithMap(value) {
             units.push({ ch: ' ', start: pendingSpace.start, end: pendingSpace.end });
             pendingSpace = null;
         }
-        for (const ch of normalized) units.push({ ch, start: part.start, end: part.end });
+        for (const ch of normalized) {
+            for (let u = 0; u < ch.length; u++) units.push({ ch: ch[u], start: part.start, end: part.end });
+        }
     }
     return { source, normalized: units.map(x => x.ch).join(''), map: units };
 }

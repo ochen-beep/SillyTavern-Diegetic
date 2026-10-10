@@ -2,6 +2,9 @@
   "name": "diegetic",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=21"
+  },
   "type": "module",
   "description": "Diegetic artifacts for SillyTavern via JS-Slash-Runner",
   "license": "MIT",

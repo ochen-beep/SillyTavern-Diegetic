@@ -2,8 +2,7 @@
 // Prompt-strip: наши fenced-блоки не должны уходить в промпт модели.
 // ВАЖНО: destination.display=false — display-regex применился бы в messageFormatting
 // ДО детекта раннера и сломал рендер. Только prompt.
-// Пересечение API: replaceTavernRegexes есть в 4.9.5, updateTavernRegexesWith — только 4.11.3,
-// поэтому работаем через get → merge → replace.
+// работаем через get → merge → replace (консервативно, работает на 4.9.5 и 4.11.3).
 
 export const REGEX_SCRIPT_NAME = 'Diegetic prompt-strip';
 
@@ -13,7 +12,7 @@ export function buildMergedRegexes(existing) {
         id: 'diegetic-prompt-strip',
         script_name: REGEX_SCRIPT_NAME,
         enabled: true,
-        find_regex: '```html[\\s\\S]*?```',
+        find_regex: '/```html[\\s\\S]*?```/g',
         replace_string: '[диегетический артефакт]',
         trim_strings: [],
         source: { user_input: false, ai_output: true, slash_command: false, world_info: false, reasoning: false },
@@ -37,7 +36,9 @@ export function buildMergedRegexes(existing) {
     return { changed: true, regexes: [...list, desired] };
 }
 
-/** Хост-обёртка: api = { getTavernRegexes, replaceTavernRegexes }. Идемпотентна. */
+/** Хост-обёртка: api = { getTavernRegexes, replaceTavernRegexes }. Идемпотентна.
+ * Запись не бесплатна: раннер переписывает весь глобальный список и теряет substituteRegex
+ * у чужих скриптов (TODO в самом раннере) — не вызывать чаще старта и CHAT_CHANGED. */
 export async function ensurePromptStripRegex(api) {
     const current = await api.getTavernRegexes({ type: 'global' });
     const { changed, regexes } = buildMergedRegexes(current);

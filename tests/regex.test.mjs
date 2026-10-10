@@ -1,13 +1,13 @@
 // tests/regex.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { REGEX_SCRIPT_NAME, buildMergedRegexes } from '../src/regex.js';
+import { REGEX_SCRIPT_NAME, buildMergedRegexes, ensurePromptStripRegex } from '../src/regex.js';
 
 const ours = () => buildMergedRegexes([]).regexes.find(r => r.script_name === REGEX_SCRIPT_NAME);
 
 test('создаёт prompt-only скрипт с нужными полями (snake_case раннера)', () => {
   const r = ours();
-  assert.equal(r.find_regex, '```html[\\s\\S]*?```');
+  assert.equal(r.find_regex, '/```html[\\s\\S]*?```/g');
   assert.equal(r.replace_string, '[диегетический артефакт]');
   assert.equal(r.destination.display, false);
   assert.equal(r.destination.prompt, true);
@@ -31,4 +31,19 @@ test('наш устаревший скрипт обновляется, чужи�
   const fixed = res.regexes.find(r => r.script_name === REGEX_SCRIPT_NAME);
   assert.equal(fixed.replace_string, '[диегетический артефакт]');
   assert.ok(res.regexes.includes(other));
+});
+
+test('ensurePromptStripRegex: пишет только при changed', async () => {
+  const calls = { get: 0, replace: 0 };
+  let stored = []; // как реальный хост: изначально нашего скрипта в глобальном списке нет
+  const api = {
+    getTavernRegexes: async () => { calls.get++; return stored; },
+    replaceTavernRegexes: async (r) => { calls.replace++; stored = r; return r; },
+  };
+  await ensurePromptStripRegex(api);
+  assert.equal(calls.get, 1);
+  assert.equal(calls.replace, 1);
+  await ensurePromptStripRegex(api);
+  assert.equal(calls.get, 2);
+  assert.equal(calls.replace, 1, 'второй вызов не пишет — changed=false');
 });

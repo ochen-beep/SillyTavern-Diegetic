@@ -3,7 +3,7 @@ import { contentDigest, isViableMessageText } from './digest.js';
 import { findAnchorInText, findFuzzySpan } from './anchor.js';
 import { hasOwnBlock, stripOwnBlocks, paragraphEndAfter, applyInsertions } from './paragraph.js';
 import { parseDiegeticResponse } from './parser.js';
-import { assemblePrompt } from './contract.js';
+import { assemblePrompt, assemblePromptParts } from './contract.js';
 import { buildGenerateConfig, generationIdFor } from './source.js';
 import { META_KEY, recordArtifacts, removeDigest } from './meta.js';
 
@@ -46,16 +46,30 @@ export function createPipeline(deps) {
             const genId = generationIdFor(messageId, run.token);
             run.ctrl.signal.addEventListener('abort', () => api.stopGenerationById?.(genId));
             const profile = activeProfile();
-            const prompt = assemblePrompt({
-                lensText: profile.lensText ?? '',
-                postText: prose,
-                // await: провайдер контекста может быть асинхронным; на синхронном await безвреден
-                contextBlock: getContextBlock ? await getContextBlock(messageId, s.contextDepth) : '',
-                maxCount: s.maxPerMessage,
-            });
+            // lensResolver (main.js) резолвит '@universal' в текст встроенной линзы;
+            // без него — линза профиля как есть (тесты).
+            const lensText = deps.lensResolver ? deps.lensResolver(profile) : (profile?.lensText ?? '');
             let raw;
             try {
-                raw = await api.generateRaw(buildGenerateConfig({ prompt, profile, contextDepth: s.contextDepth, generationId: genId }));
+                if (profile?.source === 'profile') {
+                    // Источник «профиль подключения» (Connection Manager, как в DS-Comments):
+                    // sendRequest принимает сообщения ролями, generateRaw здесь не участвует.
+                    const { system, user } = assemblePromptParts({
+                        lensText, postText: prose,
+                        contextBlock: getContextBlock ? await getContextBlock(messageId, s.contextDepth) : '',
+                        maxCount: s.maxPerMessage,
+                    });
+                    raw = await api.cmGenerate({ system, user, profile, signal: run.ctrl.signal });
+                } else {
+                    const prompt = assemblePrompt({
+                        lensText,
+                        postText: prose,
+                        // await: провайдер контекста может быть асинхронным; на синхронном await безвреден
+                        contextBlock: getContextBlock ? await getContextBlock(messageId, s.contextDepth) : '',
+                        maxCount: s.maxPerMessage,
+                    });
+                    raw = await api.generateRaw(buildGenerateConfig({ prompt, profile, contextDepth: s.contextDepth, generationId: genId }));
+                }
             } catch (e) {
                 notify.error(`Diegetic: генерация не удалась (${e?.message || e})`);
                 return;

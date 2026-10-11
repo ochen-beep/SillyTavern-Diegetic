@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIEGETIC_CONTRACT, assemblePrompt } from '../src/contract.js';
+import { DIEGETIC_CONTRACT, assemblePrompt, assemblePromptParts } from '../src/contract.js';
 import { parseDiegeticResponse } from '../src/parser.js';
 
 test('контракт содержит ключевые правила формата', () => {
@@ -26,6 +26,19 @@ test('assemblePrompt: контекст идёт перед постом', () => 
 test('assemblePrompt: линза без маркера — контракт всё равно добавлен', () => {
     const p = assemblePrompt({ lensText: 'просто линза', postText: 'P', maxCount: 1 });
     assert.ok(p.includes('<!--DIEGETIC'));
+});
+
+test('assemblePromptParts: system = линза+контракт, user = пост; контекст перед постом', () => {
+    const parts = assemblePromptParts({ lensText: 'Линза.\n{{CONTRACT}}', postText: 'ПОСТ', contextBlock: 'РАННЕЕ', maxCount: 2 });
+    assert.ok(!parts.system.includes('{{CONTRACT}}'));
+    assert.match(parts.system, /не более 2/);
+    assert.ok(parts.system.includes('Линза.'));
+    assert.ok(!parts.system.includes('ПОСТ'));
+    assert.ok(!parts.user.includes('TOOL — DIEGETIC'));
+    assert.ok(parts.user.indexOf('РАННЕЕ') < parts.user.indexOf('ПОСТ'));
+    // assemblePrompt — те же части, склеенные: ничего не теряется
+    const joined = assemblePrompt({ lensText: 'Линза.\n{{CONTRACT}}', postText: 'ПОСТ', contextBlock: 'РАННЕЕ', maxCount: 2 });
+    assert.ok(joined.includes(parts.system) && joined.includes(parts.user));
 });
 
 test('round-trip: пара из контракта парсится чисто', () => {

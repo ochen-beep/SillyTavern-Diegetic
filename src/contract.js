@@ -30,15 +30,25 @@ export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (контракт �
 - Если импульса нет (диалог, рефлексия, действие без предметов) — верни ровно:
   \`<!--DIEGETIC {"pulse":false}-->\` и ничего больше.`;
 
-export function assemblePrompt({ lensText, postText, contextBlock = '', maxCount = 1 }) {
+/**
+ * Раздельная сборка: system = линза+контракт, user = контекст+пост.
+ * Формат для ConnectionManagerRequestService.sendRequest (source 'profile');
+ * assemblePrompt — это те же части, склеенные в одну строку для generateRaw.
+ */
+export function assemblePromptParts({ lensText, postText, contextBlock = '', maxCount = 1 }) {
     maxCount = Math.max(1, Math.min(5, Number(maxCount) || 1));
     const lens = String(lensText ?? '');
     const withContract = lens.includes('{{CONTRACT}}')
         ? lens.replaceAll('{{CONTRACT}}', DIEGETIC_CONTRACT)
         : lens.trim() + '\n\n' + DIEGETIC_CONTRACT;
     const filled = withContract.replace(/\{\{MAX_COUNT\}\}/gu, String(maxCount));
-    const tail = contextBlock
-        ? `### Источник анализа\nКонтекст предыдущих сообщений:\n${contextBlock}\n\nПост (найди импульсы в нём):\n${postText}`
-        : `### Источник анализа\nПост (найди импульсы в нём):\n${postText}`;
-    return [filled.trim(), '', tail].join('\n');
+    const user = contextBlock
+        ? `Контекст предыдущих сообщений:\n${contextBlock}\n\nПост (найди импульсы в нём):\n${postText}`
+        : `Пост (найди импульсы в нём):\n${postText}`;
+    return { system: filled.trim(), user };
+}
+
+export function assemblePrompt({ lensText, postText, contextBlock = '', maxCount = 1 }) {
+    const { system, user } = assemblePromptParts({ lensText, postText, contextBlock, maxCount });
+    return `${system}\n\n### Источник анализа\n${user}`;
 }

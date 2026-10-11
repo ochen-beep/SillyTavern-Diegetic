@@ -1,3 +1,8 @@
+// Сентинел «встроенной универсальной линзы»: профили с таким lensText получают
+// содержимое templates/universal.md, забандленное в скрипт (main.js резолвит его
+// через resolveLensText). Экономит переменную и не рассинхронизируется с бандлом.
+export const UNIVERSAL_LENS_REF = '@universal';
+
 export const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
     maxPerMessage: 1,          // 1..5 — сколько артефактов контракт может вернуть за вызов
@@ -6,11 +11,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
     appearance: 'toast',       // 'silent' | 'toast' | 'toast+sound'
     activeProfile: 'default',
     profiles: [
-        { id: 'default', name: 'Базовый', source: 'current', sourceConfig: null },
+        { id: 'default', name: 'Универсальный', source: 'current', sourceConfig: null, lensText: UNIVERSAL_LENS_REF },
     ],
 });
 
 const APPEARANCES = new Set(['silent', 'toast', 'toast+sound']);
+const SOURCES = new Set(['current', 'custom', 'profile']);
 // «Мусор — дефолты»: нечисловое или выходящее за [lo, hi] значение даёт дефолт, а не границу диапазона.
 const bounded = (v, lo, hi, dflt) => {
     const n = Math.round(Number(v));
@@ -24,7 +30,7 @@ export function normalizeSettings(input) {
     const cleaned = Array.isArray(raw.profiles)
         ? raw.profiles.filter(p => p && typeof p === 'object' && p.id).map(p => ({
             id: String(p.id), name: String(p.name || p.id),
-            source: p.source === 'custom' ? 'custom' : 'current',
+            source: SOURCES.has(p.source) ? p.source : 'current',
             sourceConfig: p.sourceConfig && typeof p.sourceConfig === 'object' ? { ...p.sourceConfig } : null,
             lensText: typeof p.lensText === 'string' ? p.lensText : '',
         }))

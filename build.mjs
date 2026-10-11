@@ -9,6 +9,8 @@ await esbuild.build({
     outfile: 'dist/diegetic.js',
     minify: false,
     legalComments: 'none',
+    charset: 'utf8', // кириллица линз остаётся читаемой, а не \uXXXX-эскейпами
+    loader: { '.md': 'text' }, // templates/*.md инлайнятся в бандл (универсальная линза + галерея)
     banner: { js: '// Diegetic — диегетические артефакты для JS-Slash-Runner. Сгенерировано из src/, не правь вручную.' },
 });
 console.log('dist/diegetic.js готов');

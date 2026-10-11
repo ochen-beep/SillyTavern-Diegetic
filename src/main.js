@@ -1,11 +1,14 @@
 // src/main.js
 import { createPipeline, isExcluded } from './pipeline.js';
 import { createGenerationCoordinator } from './coordinator.js';
-import { loadSettings, saveSettings } from './settings.js';
+import { loadSettings, saveSettings, UNIVERSAL_LENS_REF } from './settings.js';
 import { ensurePromptStripRegex } from './regex.js';
 import { metaFor, recordArtifacts, readMetaMap } from './meta.js';
 import { stripOwnBlocks } from './paragraph.js';
 import { contentDigest } from './digest.js';
+import { resolveLensText } from './lensref.js';
+import { normalizeCmProfiles, buildCmMessages, extractCmText, cmErrorMessage } from './cm.js';
+import { UNIVERSAL_LENS, GALLERY } from './lenses.js';
 import { mountPanel, attachOverlay } from './ui.js';
 
 (function init() {
@@ -17,10 +20,56 @@ import { mountPanel, attachOverlay } from './ui.js';
         console.warn(`[Diegetic] JS-Slash-Runner API не найден: ${missing.join(', ')}`);
         return;
     }
+
+    // Контекст SillyTavern в parent-window — источник «профиль подключения»
+    // (Connection Manager), как в DS-Comments. Недоступен — источник просто не
+    // предлагается в панели.
+    const parentST = () => {
+        try { return window.parent?.SillyTavern?.getContext?.() || null; } catch { return null; }
+    };
+    const cmProfilesRaw = () => {
+        try {
+            const ctx = parentST();
+            const es = ctx?.extensionSettings ?? window.parent?.extension_settings;
+            const list = es?.connectionManager?.profiles;
+            return Array.isArray(list) ? list : [];
+        } catch { return []; }
+    };
+    const cmSend = async ({ system, user, profile, signal }) => {
+        const ctx = parentST();
+        const svc = ctx?.ConnectionManagerRequestService;
+        if (!svc?.sendRequest) {
+            throw new Error('Connection Manager недоступен — включи расширение connection-manager или выбери другой источник');
+        }
+        const profileId = profile?.sourceConfig?.profileId;
+        if (!profileId) throw new Error('В профиле не выбран профиль подключения');
+        const cmReady = cmProfilesRaw().length > 0;
+        if (!cmReady) {
+            // CM мог ещё не наполнить профили к первому запросу — короткое ожидание.
+            for (let i = 0; i < 15 && cmProfilesRaw().length === 0; i++) {
+                await new Promise(r => setTimeout(r, 300));
+            }
+        }
+        let resp;
+        try {
+            resp = await svc.sendRequest(profileId, buildCmMessages({ system, user }), undefined,
+                { stream: false, signal: signal || null, extractData: true, includePreset: false, includeInstruct: false });
+        } catch (e) {
+            if (signal?.aborted || e?.name === 'AbortError' || e?.cause?.name === 'AbortError') {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+            throw new Error(`Профиль «${profile?.sourceConfig?.profileName || profileId}»: ${cmErrorMessage(e)}`);
+        }
+        const text = extractCmText(resp);
+        if (text === null) throw new Error('Профиль вернул ответ, но текст из него извлечь не удалось');
+        return text;
+    };
+
     const api = {
         getChatMessages: (...a) => g.getChatMessages(...a),
         setChatMessages: (...a) => g.setChatMessages(...a),
         generateRaw: (...a) => g.generateRaw(...a),
+        cmGenerate: cmSend,
         stopGenerationById: (id) => g.stopGenerationById?.(id),
         getVariables: () => g.getVariables({ type: 'chat' }),
         insertOrAssignVariables: (vars) => g.insertOrAssignVariables(vars, { type: 'chat' }),
@@ -28,6 +77,7 @@ import { mountPanel, attachOverlay } from './ui.js';
         replaceTavernRegexes: (...a) => g.replaceTavernRegexes(...a),
         getGlobalVariables: () => g.getVariables({ type: 'global' }),
         setGlobalVariables: (vars) => g.insertOrAssignVariables(vars, { type: 'global' }),
+        listCmProfiles: () => normalizeCmProfiles(cmProfilesRaw()),
     };
     const settingsStorage = {
         get: () => api.getGlobalVariables().dg_settings,
@@ -57,6 +107,8 @@ import { mountPanel, attachOverlay } from './ui.js';
         api, notify, getContextBlock,
         get settings() { return settings; },
         coordinator,
+        // '@universal' и пустая линза → встроенный универсальный шаблон
+        lensResolver: (p) => resolveLensText(p?.lensText, UNIVERSAL_LENS),
     });
 
     const chatVars = () => api.getVariables();
@@ -79,17 +131,40 @@ import { mountPanel, attachOverlay } from './ui.js';
             if (p) p.lensText = String(text ?? '');
             save();
         },
-        addProfile: ({ name, source, apiurl, key, model }) => {
+        addProfile: ({ name, source, apiurl, key, model, profileId, profileName }) => {
             const id = `p${Date.now().toString(36)}`;
+            const src = source === 'custom' ? 'custom' : source === 'profile' ? 'profile' : 'current';
             settings.profiles.push({
                 id,
                 name: String(name ?? '').trim() || 'Профиль',
-                source: source === 'custom' ? 'custom' : 'current',
-                sourceConfig: source === 'custom' ? { apiurl: String(apiurl ?? ''), key: String(key ?? ''), model: String(model ?? '') } : null,
-                lensText: '',
+                source: src,
+                sourceConfig: src === 'custom'
+                    ? { apiurl: String(apiurl ?? ''), key: String(key ?? ''), model: String(model ?? '') }
+                    : src === 'profile' ? { profileId: String(profileId ?? ''), profileName: String(profileName ?? '') } : null,
+                lensText: UNIVERSAL_LENS_REF,
             });
             settings.activeProfile = id;
             save(); // saveSettings прогоняет через normalizeSettings — форма записи канонизируется
+        },
+        setProfileSource: ({ source, apiurl, key, model, profileId, profileName }) => {
+            const p = settings.profiles.find(x => x.id === settings.activeProfile) || settings.profiles[0];
+            if (!p) return;
+            p.source = source === 'custom' ? 'custom' : source === 'profile' ? 'profile' : 'current';
+            p.sourceConfig = p.source === 'custom'
+                ? { apiurl: String(apiurl ?? ''), key: String(key ?? ''), model: String(model ?? '') }
+                : p.source === 'profile' ? { profileId: String(profileId ?? ''), profileName: String(profileName ?? '') } : null;
+            save();
+        },
+        getUniversalLens: () => UNIVERSAL_LENS,
+        getGallery: () => GALLERY,
+        listCmProfiles: () => api.listCmProfiles(),
+        // Последнее сообщение ассистента в чате — цель кнопки «Сгенерировать».
+        getLatestAssistantId: () => {
+            const list = api.getChatMessages('0-9999') || [];
+            for (let i = list.length - 1; i >= 0; i--) {
+                if (list[i]?.role === 'assistant') return Number(list[i].message_id);
+            }
+            return null;
         },
         pipeline,
         regenByDigest: (digest) => {

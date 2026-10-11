@@ -182,3 +182,43 @@ test('isExcluded: подстрока без учёта регистра/кавы
   assert.equal(isExcluded('Спокойная сцена.', ['СТОЙ', '']), false);
   assert.equal(isExcluded('Что-то.', []), false);
 });
+
+test('источник profile: генерация через cmGenerate, generateRaw не вызывается', async () => {
+  const { deps, messages, chatVars, notifications, api } = makeDeps();
+  let cmCalled = 0;
+  let rawCalled = 0;
+  let received = null;
+  deps.settings = {
+    ...DEFAULT_SETTINGS,
+    profiles: [{ id: 'cm1', name: 'CM', source: 'profile', sourceConfig: { profileId: 'prof-1', profileName: 'Грок' }, lensText: '' }],
+    activeProfile: 'cm1',
+  };
+  deps.lensResolver = (p) => `ЛИНЗА[${p?.lensText ?? ''}]`;
+  deps.api = {
+    ...api,
+    generateRaw: async () => { rawCalled++; return RESP; },
+    cmGenerate: async (args) => { cmCalled++; received = args; return RESP; },
+  };
+  await createPipeline(deps).run(0);
+  assert.equal(cmCalled, 1);
+  assert.equal(rawCalled, 0);
+  assert.equal(received.profile.sourceConfig.profileId, 'prof-1');
+  assert.match(received.system, /ЛИНЗА\[\]/);
+  assert.match(received.system, /TOOL — DIEGETIC HTML/);
+  assert.match(received.user, /Пост \(найди импульсы в нём\)/);
+  assert.ok(messages[0].message.includes('<body><p>phone</p></body>'));
+  assert.ok(notifications.some(([k]) => k === 'ready'));
+});
+
+test('источник profile: ошибка cmGenerate — тост с ошибкой, текст не тронут', async () => {
+  const { deps, messages, notifications, api } = makeDeps();
+  deps.settings = {
+    ...DEFAULT_SETTINGS,
+    profiles: [{ id: 'cm1', name: 'CM', source: 'profile', sourceConfig: { profileId: 'prof-1' }, lensText: '' }],
+    activeProfile: 'cm1',
+  };
+  deps.api = { ...api, generateRaw: async () => RESP, cmGenerate: async () => { throw new Error('CM недоступен'); } };
+  await createPipeline(deps).run(0);
+  assert.equal(messages[0].message, PROSE);
+  assert.ok(notifications.some(([, m]) => m.includes('CM недоступен')));
+});

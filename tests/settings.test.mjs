@@ -60,3 +60,32 @@ test('lensText переживает normalizeSettings и save/load round-trip', 
   const loaded = loadSettings(storage);
   assert.equal(loaded.profiles[0].lensText, '{{CONTRACT}}\nСтиль линзы');
 });
+
+test('дефолтный профиль: источник current, линза — сентинел встроенной универсальной', () => {
+  const s = normalizeSettings({});
+  const d = s.profiles.find(p => p.id === 'default');
+  assert.ok(d, 'дефолтный профиль на месте');
+  assert.equal(d.source, 'current');
+  assert.equal(d.lensText, '@universal');
+  assert.equal(d.name, 'Универсальный');
+});
+
+test('источник profile (Connection Manager): сохраняется с sourceConfig.profileId', () => {
+  const backing = {};
+  const storage = { get: () => backing.s, set: (v) => { backing.s = v; } };
+  const s = normalizeSettings({
+    profiles: [{ id: 'cm', name: 'CM', source: 'profile', sourceConfig: { profileId: 'p1', profileName: 'Грок' } }],
+    activeProfile: 'cm',
+  });
+  assert.equal(s.profiles[0].source, 'profile');
+  assert.equal(s.profiles[0].sourceConfig.profileId, 'p1');
+  saveSettings(storage, s);
+  const p = loadSettings(storage).profiles[0];
+  assert.equal(p.source, 'profile');
+  assert.equal(p.sourceConfig.profileName, 'Грок');
+});
+
+test('мусорный source деградирует в current', () => {
+  const s = normalizeSettings({ profiles: [{ id: 'x', name: 'X', source: 'kek' }] });
+  assert.equal(s.profiles[0].source, 'current');
+});

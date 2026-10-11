@@ -148,6 +148,13 @@ test('force + pulse=false: старые блоки сняты, уведомле�
   assert.deepEqual(cleared.artifacts, []);
 });
 
+test('force + pulse=false без старых блоков: честный тост вместо тишины', async () => {
+  const { deps, messages, notifications } = makeDeps({ raw: '<!--DIEGETIC {"pulse":false}-->' });
+  await createPipeline(deps).run(0, { force: true });
+  assert.equal(messages[0].message, PROSE);
+  assert.ok(notifications.some(([, m]) => m.includes('импульса для артефакта нет')));
+});
+
 test('abort mid-flight: stopGenerationById вызван с generation_id прогона', async () => {
   const { deps, messages, api } = makeDeps();
   const stopIds = [];

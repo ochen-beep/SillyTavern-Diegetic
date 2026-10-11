@@ -94,6 +94,10 @@ export function createPipeline(deps) {
                         writeVars(next);
                         await api.setChatMessages([{ message_id: Number(messageId), message: stripped }], { refresh: 'affected' });
                         notify.ready('Diegetic: импульса нет — артефакт(ы) сняты');
+                    } else {
+                        // ручная генерация без импульса: молчание выглядит как поломка —
+                        // честно сообщаем, что модель не нашла импульса и пост не тронут
+                        notify.ready('Diegetic: импульса для артефакта нет — пост не тронут');
                     }
                 }
                 return;

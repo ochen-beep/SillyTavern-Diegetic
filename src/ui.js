@@ -160,15 +160,11 @@ export function mountPanel(deps) {
         const profiles = st.profiles
             .map(p => `<option value="${esc(p.id)}" ${p.id === st.activeProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
         const active = st.profiles.find(p => p.id === st.activeProfile) || st.profiles[0];
-        const rawLens = String(active?.lensText ?? '').trim();
-        const lens = (!rawLens || rawLens === '@universal')
-            ? (deps.getUniversalLens ? deps.getUniversalLens() : '')
-            : active.lensText;
+        const template = String(active?.templateText ?? '').trim()
+            || (deps.getUniversalTemplate ? deps.getUniversalTemplate() : '');
         const cmProfiles = deps.listCmProfiles ? deps.listCmProfiles() : [];
         const cmOptions = cmProfiles
             .map(p => `<option value="${esc(p.id)}" ${active?.sourceConfig?.profileId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-        const gallery = deps.getGallery ? deps.getGallery() : [];
-        const galleryOptions = gallery.map((g, i) => `<option value="${i}">${esc(g.name)}</option>`).join('');
         const src = active?.source || 'current';
         const sc = active?.sourceConfig || {};
         $(panel).html(`
@@ -197,13 +193,12 @@ export function mountPanel(deps) {
             </div>
             <div class="dg-section">
               <details>
-                <summary>Линза шаблона</summary>
-                ${galleryOptions ? `<select id="dg-gallery"><option value="">— вставить из галереи —</option>${galleryOptions}</select><div style="height:6px"></div>` : ''}
-                <textarea id="dg-lens" rows="9">${esc(lens)}</textarea>
+                <summary>Текст шаблона</summary>
+                <textarea id="dg-template" rows="9">${esc(template)}</textarea>
                 <p class="dg-hint">пустое поле = встроенный универсальный шаблон (на все случаи)</p>
                 <div class="dg-genrow">
-                  <button class="dg-btn" id="dg-save-lens">Сохранить линзу</button>
-                  <button class="dg-btn" id="dg-reset-lens" title="Вернуть встроенную универсальную линзу">Вернуть встроенную</button>
+                  <button class="dg-btn" id="dg-save-template">Сохранить шаблон</button>
+                  <button class="dg-btn" id="dg-reset-template" title="Вернуть встроенный универсальный шаблон">Вернуть встроенный</button>
                 </div>
               </details>
             </div>
@@ -244,7 +239,7 @@ export function mountPanel(deps) {
                   </div>
                 </div>
                 <div class="dg-genrow"><button class="dg-btn" id="dg-add-profile">Добавить профиль</button></div>
-                <p class="dg-hint">Новый профиль получает встроенную универсальную линзу — правится в «Линза шаблона».</p>
+                <p class="dg-hint">Новый профиль получает встроенный универсальный шаблон — правится в «Текст шаблона».</p>
               </details>
             </div>
             <div class="dg-section">
@@ -326,14 +321,8 @@ export function mountPanel(deps) {
         const id = Number($('#dg-msgid').val());
         if (Number.isFinite(id)) deps.pipeline.run(id, { force: true });
     });
-    $(doc).on('click.diegetic', '#dg-save-lens', () => { deps.setLensText(String($('#dg-lens').val())); });
-    $(doc).on('click.diegetic', '#dg-reset-lens', () => { deps.setLensText(''); render(); });
-    $(doc).on('change.diegetic', '#dg-gallery', (e) => {
-        const i = Number($(e.target).val());
-        const g = (deps.getGallery ? deps.getGallery() : [])[i];
-        if (g) $('#dg-lens').val(g.text);
-        $(e.target).val('');
-    });
+    $(doc).on('click.diegetic', '#dg-save-template', () => { deps.setTemplateText(String($('#dg-template').val())); });
+    $(doc).on('click.diegetic', '#dg-reset-template', () => { deps.setTemplateText(''); render(); });
     $(doc).on('click.diegetic', '#dg-save-source', () => {
         deps.setProfileSource({
             source: String($('#dg-source').val()),
@@ -372,7 +361,7 @@ export function mountPanel(deps) {
         $('#dg-newname').val(''); $('#dg-napiurl').val(''); $('#dg-nkey').val(''); $('#dg-nmodel').val('');
         $('#dg-new-cm').hide(); $('#dg-new-custom').hide();
         $('#dg-newsource').val('current');
-        render(); // добавленный профиль становится активным — селект и линза перечитаются
+        render(); // добавленный профиль становится активным — селект и шаблон перечитаются
     });
     $(doc).on('click.diegetic', '#dg-regen', (e) => deps.regenByDigest(String($(e.target).data('digest'))));
     $(doc).on('click.diegetic', '#dg-del', (e) => deps.deleteByDigest(String($(e.target).data('digest'))));

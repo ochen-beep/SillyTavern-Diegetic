@@ -50,23 +50,33 @@ test('round-trip кастомного профиля через save/load', () =
   assert.equal(loaded.activeProfile, 'pro');
 });
 
-test('lensText переживает normalizeSettings и save/load round-trip', () => {
+test('templateText переживает normalizeSettings и save/load round-trip', () => {
   const backing = {};
   const storage = { get: () => backing.s, set: (v) => { backing.s = v; } };
-  const s = normalizeSettings({ profiles: [{ id: 'a', name: 'A', source: 'current', lensText: '{{CONTRACT}}\nСтиль линзы' }], activeProfile: 'a' });
-  assert.equal(s.profiles[0].lensText, '{{CONTRACT}}\nСтиль линзы');
-  assert.equal(normalizeSettings({ profiles: [{ id: 'b', name: 'B' }] }).profiles[0].lensText, '', 'без lensText → пустая строка');
+  const s = normalizeSettings({ profiles: [{ id: 'a', name: 'A', source: 'current', templateText: '{{CONTRACT}}\nСвой стиль' }], activeProfile: 'a' });
+  assert.equal(s.profiles[0].templateText, '{{CONTRACT}}\nСвой стиль');
+  assert.equal(normalizeSettings({ profiles: [{ id: 'b', name: 'B' }] }).profiles[0].templateText, '', 'без templateText → пустая строка (= встроенный)');
   saveSettings(storage, s);
   const loaded = loadSettings(storage);
-  assert.equal(loaded.profiles[0].lensText, '{{CONTRACT}}\nСтиль линзы');
+  assert.equal(loaded.profiles[0].templateText, '{{CONTRACT}}\nСвой стиль');
 });
 
-test('дефолтный профиль: источник current, линза — сентинел встроенной универсальной', () => {
+test('миграция: lensText старых профилей переезжает в templateText, сентинел @universal → пусто', () => {
+  const s = normalizeSettings({ profiles: [
+    { id: 'old1', name: 'O1', lensText: '@universal' },
+    { id: 'old2', name: 'O2', lensText: '{{CONTRACT}}\nкастом' },
+  ] });
+  assert.equal(s.profiles[0].templateText, '', '@universal → пустая строка (= встроенный)');
+  assert.equal(s.profiles[1].templateText, '{{CONTRACT}}\nкастом');
+  assert.ok(!('lensText' in s.profiles[0]), 'старое поле не протекает наружу');
+});
+
+test('дефолтный профиль: источник current, шаблон пустой (= встроенный универсальный)', () => {
   const s = normalizeSettings({});
   const d = s.profiles.find(p => p.id === 'default');
   assert.ok(d, 'дефолтный профиль на месте');
   assert.equal(d.source, 'current');
-  assert.equal(d.lensText, '@universal');
+  assert.equal(d.templateText, '');
   assert.equal(d.name, 'Универсальный');
 });
 

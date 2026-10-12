@@ -1,5 +1,5 @@
 // Неизменяемое ядро формата (порт идеи Glosses/src/prompt-contract.js):
-// ломать его = ломать src/parser.js. Стилистические линзы — в templates/*.md.
+// ломать его = ломать src/parser.js. Шаблон — в templates/universal.md.
 
 export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (контракт ответа)
 
@@ -21,7 +21,7 @@ export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (контракт �
 
 ### Формат ответа (НАРУШАТЬ НЕЛЬЗЯ)
 - Верни не более {{MAX_COUNT}} артефакт(ов). Каждый — ровно одна пара:
-  1) HTML-комментарий \`<!--DIEGETIC {"pulse":true,"type":"<тип>","anchor":"<дословная короткая фраза из поста>"}-->\`
+  1) HTML-комментарий \`<!--DIEGETIC {"type":"<тип>","anchor":"<дословная короткая фраза из поста>"}-->\`
   2) сразу за ним один fenced-блок \`\`\`html, внутри — полноценный документ с \`<body>...\</body>\`.
 - "anchor" — ДОСЛОВНАЯ короткая фраза (2–6 слов) из поста, рядом с которой артефакт
   встраивается в сцену. Не перефразируй, не меняй пунктуацию. Фраза должна встречаться один раз.
@@ -32,16 +32,16 @@ export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (контракт �
   Для каждого поста существует подходящий носитель — найди его и исполни.`;
 
 /**
- * Раздельная сборка: system = линза+контракт, user = контекст+пост.
+ * Раздельная сборка: system = шаблон+контракт, user = контекст+пост.
  * Формат для ConnectionManagerRequestService.sendRequest (source 'profile');
  * assemblePrompt — это те же части, склеенные в одну строку для generateRaw.
  */
-export function assemblePromptParts({ lensText, postText, contextBlock = '', maxCount = 1 }) {
+export function assemblePromptParts({ templateText, postText, contextBlock = '', maxCount = 1 }) {
     maxCount = Math.max(1, Math.min(5, Number(maxCount) || 1));
-    const lens = String(lensText ?? '');
-    const withContract = lens.includes('{{CONTRACT}}')
-        ? lens.replaceAll('{{CONTRACT}}', DIEGETIC_CONTRACT)
-        : lens.trim() + '\n\n' + DIEGETIC_CONTRACT;
+    const template = String(templateText ?? '');
+    const withContract = template.includes('{{CONTRACT}}')
+        ? template.replaceAll('{{CONTRACT}}', DIEGETIC_CONTRACT)
+        : template.trim() + '\n\n' + DIEGETIC_CONTRACT;
     const filled = withContract.replace(/\{\{MAX_COUNT\}\}/gu, String(maxCount));
     const user = contextBlock
         ? `Контекст предыдущих сообщений:\n${contextBlock}\n\nПост (создай по нему артефакт):\n${postText}`
@@ -49,7 +49,7 @@ export function assemblePromptParts({ lensText, postText, contextBlock = '', max
     return { system: filled.trim(), user };
 }
 
-export function assemblePrompt({ lensText, postText, contextBlock = '', maxCount = 1 }) {
-    const { system, user } = assemblePromptParts({ lensText, postText, contextBlock, maxCount });
+export function assemblePrompt({ templateText, postText, contextBlock = '', maxCount = 1 }) {
+    const { system, user } = assemblePromptParts({ templateText, postText, contextBlock, maxCount });
     return `${system}\n\n### Источник анализа\n${user}`;
 }

@@ -46,23 +46,22 @@ export function createPipeline(deps) {
             const genId = generationIdFor(messageId, run.token);
             run.ctrl.signal.addEventListener('abort', () => api.stopGenerationById?.(genId));
             const profile = activeProfile();
-            // lensResolver (main.js) резолвит '@universal' в текст встроенной линзы;
-            // без него — линза профиля как есть (тесты).
-            const lensText = deps.lensResolver ? deps.lensResolver(profile) : (profile?.lensText ?? '');
+            // resolveTemplate (main.js): '' у профиля → встроенный универсальный шаблон.
+            const templateText = deps.resolveTemplate ? deps.resolveTemplate(profile) : (profile?.templateText ?? '');
             let raw;
             try {
                 if (profile?.source === 'profile') {
                     // Источник «профиль подключения» (Connection Manager, как в DS-Comments):
                     // sendRequest принимает сообщения ролями, generateRaw здесь не участвует.
                     const { system, user } = assemblePromptParts({
-                        lensText, postText: prose,
+                        templateText, postText: prose,
                         contextBlock: getContextBlock ? await getContextBlock(messageId, s.contextDepth) : '',
                         maxCount: s.maxPerMessage,
                     });
                     raw = await api.cmGenerate({ system, user, profile, signal: run.ctrl.signal });
                 } else {
                     const prompt = assemblePrompt({
-                        lensText,
+                        templateText,
                         postText: prose,
                         // await: провайдер контекста может быть асинхронным; на синхронном await безвреден
                         contextBlock: getContextBlock ? await getContextBlock(messageId, s.contextDepth) : '',
@@ -77,34 +76,10 @@ export function createPipeline(deps) {
             if (!deps.coordinator.isCurrent(run)) return;
 
             const parsed = parseDiegeticResponse(raw, { maxBytes: s.maxArtifactBytes, maxCount: s.maxPerMessage });
-            if (parsed.pulse === false) {
-                if (force) {
-                    // явная регенерация + отказ модели (контракт запрещает отказ, но
-                    // модель могла его нарушить): снимаем устаревшие артефакты
-                    const live = await getMsg(messageId);
-                    if (!deps.coordinator.isCurrent(run)) return;
-                    const liveText = String(live?.message ?? '');
-                    if (hasOwnBlock(liveText)) {
-                        const stripped = stripOwnBlocks(liveText);
-                        // живой recheck прозы: изменилась, пока шла генерация — отменяем
-                        if (contentDigest(stripped) !== proseDigest) return;
-                        // insertOrAssignVariables раннера — глубокий merge БЕЗ удаления ключей,
-                        // поэтому «снимаем» запись, перезаписывая её пустым списком артефактов.
-                        const vars = chatVars();
-                        const next = recordArtifacts(vars, contentDigest(stripped), []);
-                        writeVars(next);
-                        await api.setChatMessages([{ message_id: Number(messageId), message: stripped }], { refresh: 'affected' });
-                        notify.ready('Diegetic: модель отказалась (нарушение контракта) — артефакт(ы) сняты');
-                    } else {
-                        // ручная генерация с отказом: молчание выглядит как поломку —
-                        // честно сообщаем, что модель отказалась и пост не тронут
-                        notify.ready('Diegetic: модель отказалась от артефакта — пост не тронут');
-                    }
-                }
-                return;
-            }
             if (parsed.artifacts.length === 0) {
-                notify.error(`Diegetic: модель не вернула артефактов (${parsed.errors[0] || 'нет пар комментарий+fence'})`);
+                // Контракт запрещает отказ, так что это именно сбой модели: пост и
+                // уже встроенные артефакты не трогаем — регенерация заменит их только успехом.
+                notify.error(`Diegetic: модель не вернула артефакт (${parsed.errors[0] || 'нет пар комментарий+fence'})`);
                 return;
             }
 

@@ -8,7 +8,7 @@ import { META_KEY } from '../src/meta.js';
 import { contentDigest } from '../src/digest.js';
 
 const PROSE = 'Она молча взяла телефон и вышла из комнаты.\n\nДверь закрылась.';
-const RESP = `<!--DIEGETIC {"pulse":true,"type":"phone","anchor":"взяла телефон"}-->\n\`\`\`html\n<body><p>phone</p></body>\n\`\`\``;
+const RESP = `<!--DIEGETIC {"type":"phone","anchor":"взяла телефон"}-->\n\`\`\`html\n<body><p>phone</p></body>\n\`\`\``;
 
 function makeDeps({ raw = RESP, role = 'assistant', message = PROSE, failGen = false } = {}) {
     const messages = { 0: { message_id: 0, role, message, swipes: [message], swipe_id: 0 } };
@@ -61,11 +61,11 @@ test('happy path: артефакт вставлен, метаданные под
   });
 });
 
-test('pulse=false: текст не тронут, уведомлений нет', async () => {
-  const { deps, messages, notifications } = makeDeps({ raw: '<!--DIEGETIC {"pulse":false}-->' });
+test('мусорный ответ: текст не тронут, тост ошибки', async () => {
+  const { deps, messages, notifications } = makeDeps({ raw: 'мусор' });
   await createPipeline(deps).run(0);
   assert.equal(messages[0].message, PROSE);
-  assert.equal(notifications.length, 0);
+  assert.ok(notifications.some(([k]) => k === 'error'));
 });
 
 test('role != assistant: выход без вызова', async () => {
@@ -126,33 +126,32 @@ test('регенерация: старые блоки сняты, новые в�
   const p = createPipeline(deps);
   await p.run(0);
   const withOld = messages[0].message;
-  deps.api.generateRaw = async () => `<!--DIEGETIC {"pulse":true,"type":"note","anchor":"вышла из комнаты"}-->\n\`\`\`html\n<body>new</body>\n\`\`\``;
+  deps.api.generateRaw = async () => `<!--DIEGETIC {"type":"note","anchor":"вышла из комнаты"}-->\n\`\`\`html\n<body>new</body>\n\`\`\``;
   await p.run(0, { force: true });
   assert.notEqual(messages[0].message, withOld);
   assert.ok(messages[0].message.includes('<body>new</body>'));
   assert.ok(!messages[0].message.includes('<p>phone</p>'));
 });
 
-test('force + pulse=false: старые блоки сняты, уведомление', async () => {
+test('мусорный ответ при force: тост ошибки, пост и старые артефакты не тронуты', async () => {
   const { deps, messages, chatVars, notifications } = makeDeps();
   const p = createPipeline(deps);
   await p.run(0);
-  assert.ok(messages[0].message.includes('<body>'));
-  deps.api.generateRaw = async () => '<!--DIEGETIC {"pulse":false}-->';
+  const withOld = messages[0].message;
+  assert.ok(withOld.includes('<body>'));
+  deps.api.generateRaw = async () => 'простите, не могу';
   await p.run(0, { force: true });
-  assert.equal(messages[0].message, PROSE);
-  assert.ok(notifications.some(([, m]) => m.includes('сняты')));
-  // глубокий merge раннера не удаляет ключи: запись очищается (artifacts: []), а не исчезает
-  const cleared = chatVars[META_KEY][contentDigest(PROSE)];
-  assert.ok(cleared, 'digest-запись должна остаться в карте');
-  assert.deepEqual(cleared.artifacts, []);
+  assert.equal(messages[0].message, withOld, 'сбой модели не должен удалять существующий артефакт');
+  const meta = chatVars[META_KEY][contentDigest(PROSE)];
+  assert.equal(meta.artifacts.length, 1, 'метаданные артефакта сохранены');
+  assert.ok(notifications.some(([k]) => k === 'error'));
 });
 
-test('force + pulse=false без старых блоков: честный тост вместо тишины', async () => {
-  const { deps, messages, notifications } = makeDeps({ raw: '<!--DIEGETIC {"pulse":false}-->' });
-  await createPipeline(deps).run(0, { force: true });
+test('мусорный ответ без force: тост ошибки, текст не тронут', async () => {
+  const { deps, messages, notifications } = makeDeps({ raw: 'мусор' });
+  await createPipeline(deps).run(0);
   assert.equal(messages[0].message, PROSE);
-  assert.ok(notifications.some(([, m]) => m.includes('модель отказалась от артефакта')));
+  assert.ok(notifications.some(([k]) => k === 'error'));
 });
 
 test('abort mid-flight: stopGenerationById вызван с generation_id прогона', async () => {
@@ -197,10 +196,10 @@ test('источник profile: генерация через cmGenerate, genera
   let received = null;
   deps.settings = {
     ...DEFAULT_SETTINGS,
-    profiles: [{ id: 'cm1', name: 'CM', source: 'profile', sourceConfig: { profileId: 'prof-1', profileName: 'Грок' }, lensText: '' }],
+    profiles: [{ id: 'cm1', name: 'CM', source: 'profile', sourceConfig: { profileId: 'prof-1', profileName: 'Грок' }, templateText: '' }],
     activeProfile: 'cm1',
   };
-  deps.lensResolver = (p) => `ЛИНЗА[${p?.lensText ?? ''}]`;
+  deps.resolveTemplate = (p) => `ШАБЛОН[${p?.templateText ?? ''}]`;
   deps.api = {
     ...api,
     generateRaw: async () => { rawCalled++; return RESP; },
@@ -210,7 +209,7 @@ test('источник profile: генерация через cmGenerate, genera
   assert.equal(cmCalled, 1);
   assert.equal(rawCalled, 0);
   assert.equal(received.profile.sourceConfig.profileId, 'prof-1');
-  assert.match(received.system, /ЛИНЗА\[\]/);
+  assert.match(received.system, /ШАБЛОН\[\]/);
   assert.match(received.system, /TOOL — DIEGETIC HTML/);
   assert.match(received.user, /Пост \(создай по нему артефакт\)/);
   assert.ok(messages[0].message.includes('<body><p>phone</p></body>'));
@@ -221,7 +220,7 @@ test('источник profile: ошибка cmGenerate — тост с ошиб
   const { deps, messages, notifications, api } = makeDeps();
   deps.settings = {
     ...DEFAULT_SETTINGS,
-    profiles: [{ id: 'cm1', name: 'CM', source: 'profile', sourceConfig: { profileId: 'prof-1' }, lensText: '' }],
+    profiles: [{ id: 'cm1', name: 'CM', source: 'profile', sourceConfig: { profileId: 'prof-1' }, templateText: '' }],
     activeProfile: 'cm1',
   };
   deps.api = { ...api, generateRaw: async () => RESP, cmGenerate: async () => { throw new Error('CM недоступен'); } };

@@ -1,14 +1,13 @@
 // src/main.js
 import { createPipeline, isExcluded } from './pipeline.js';
 import { createGenerationCoordinator } from './coordinator.js';
-import { loadSettings, saveSettings, UNIVERSAL_LENS_REF } from './settings.js';
+import { loadSettings, saveSettings } from './settings.js';
 import { ensurePromptStripRegex } from './regex.js';
-import { metaFor, recordArtifacts, readMetaMap } from './meta.js';
+import { metaFor, recordArtifacts } from './meta.js';
 import { stripOwnBlocks } from './paragraph.js';
 import { contentDigest } from './digest.js';
-import { resolveLensText } from './lensref.js';
 import { normalizeCmProfiles, buildCmMessages, extractCmText, cmErrorMessage } from './cm.js';
-import { UNIVERSAL_LENS, GALLERY } from './lenses.js';
+import UNIVERSAL_TEMPLATE from '../templates/universal.md';
 import { mountPanel, attachOverlay } from './ui.js';
 
 (function init() {
@@ -107,8 +106,8 @@ import { mountPanel, attachOverlay } from './ui.js';
         api, notify, getContextBlock,
         get settings() { return settings; },
         coordinator,
-        // '@universal' и пустая линза → встроенный универсальный шаблон
-        lensResolver: (p) => resolveLensText(p?.lensText, UNIVERSAL_LENS),
+        // templateText '' у профиля → встроенный универсальный шаблон из бандла
+        resolveTemplate: (p) => String(p?.templateText ?? '').trim() || UNIVERSAL_TEMPLATE,
     });
 
     const chatVars = () => api.getVariables();
@@ -126,9 +125,9 @@ import { mountPanel, attachOverlay } from './ui.js';
         settings: () => settings,
         setEnabled: (v) => { settings.enabled = v; save(); },
         setActiveProfile: (id) => { settings.activeProfile = id; save(); },
-        setLensText: (text) => {
+        setTemplateText: (text) => {
             const p = settings.profiles.find(x => x.id === settings.activeProfile) || settings.profiles[0];
-            if (p) p.lensText = String(text ?? '');
+            if (p) p.templateText = String(text ?? '');
             save();
         },
         addProfile: ({ name, source, apiurl, key, model, profileId, profileName }) => {
@@ -141,7 +140,7 @@ import { mountPanel, attachOverlay } from './ui.js';
                 sourceConfig: src === 'custom'
                     ? { apiurl: String(apiurl ?? ''), key: String(key ?? ''), model: String(model ?? '') }
                     : src === 'profile' ? { profileId: String(profileId ?? ''), profileName: String(profileName ?? '') } : null,
-                lensText: UNIVERSAL_LENS_REF,
+                templateText: '',
             });
             settings.activeProfile = id;
             save(); // saveSettings прогоняет через normalizeSettings — форма записи канонизируется
@@ -155,8 +154,7 @@ import { mountPanel, attachOverlay } from './ui.js';
                 : p.source === 'profile' ? { profileId: String(profileId ?? ''), profileName: String(profileName ?? '') } : null;
             save();
         },
-        getUniversalLens: () => UNIVERSAL_LENS,
-        getGallery: () => GALLERY,
+        getUniversalTemplate: () => UNIVERSAL_TEMPLATE,
         listCmProfiles: () => api.listCmProfiles(),
         // Последнее сообщение ассистента в чате — цель кнопки «Сгенерировать».
         getLatestAssistantId: () => {

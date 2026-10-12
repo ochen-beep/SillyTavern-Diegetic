@@ -14,7 +14,7 @@ export function normalizeCmProfiles(list) {
         .map(p => ({ id: String(p.id || p.name), name: String(p.name || p.id) }));
 }
 
-/** Сообщения для sendRequest: контракт+линза — system, контекст и пост — user. */
+/** Сообщения для sendRequest: контракт+шаблон — system, контекст и пост — user. */
 export function buildCmMessages({ system, user }) {
     return [
         { role: 'system', content: String(system ?? '') },

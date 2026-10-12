@@ -1,26 +1,30 @@
-// Сентинел «встроенной универсальной линзы»: профили с таким lensText получают
-// содержимое templates/universal.md, забандленное в скрипт (main.js резолвит его
-// через resolveLensText). Экономит переменную и не рассинхронизируется с бандлом.
-export const UNIVERSAL_LENS_REF = '@universal';
-
+// src/settings.js
 export const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
     maxPerMessage: 1,          // 1..5 — сколько артефактов контракт может вернуть за вызов
     contextDepth: 3,           // сколько предыдущих сообщений идут в вызов контекстом
     maxArtifactBytes: 32768,
-    appearance: 'toast',       // 'silent' | 'toast' | 'toast+sound'
+    appearance: 'toast',       // 'silent' | 'toast'
     activeProfile: 'default',
     profiles: [
-        { id: 'default', name: 'Универсальный', source: 'current', sourceConfig: null, lensText: UNIVERSAL_LENS_REF },
+        { id: 'default', name: 'Универсальный', source: 'current', sourceConfig: null, templateText: '' },
     ],
 });
 
-const APPEARANCES = new Set(['silent', 'toast', 'toast+sound']);
+const APPEARANCES = new Set(['silent', 'toast']);
 const SOURCES = new Set(['current', 'custom', 'profile']);
 // «Мусор — дефолты»: нечисловое или выходящее за [lo, hi] значение даёт дефолт, а не границу диапазона.
 const bounded = (v, lo, hi, dflt) => {
     const n = Math.round(Number(v));
     return Number.isFinite(n) && n >= lo && n <= hi ? n : dflt;
+};
+
+// templateText '' = встроенный универсальный шаблон из бандла (резолвится в main.js).
+// Миграция: lensText старых сохранённых профилей (включая сентинел '@universal') переезжает в templateText.
+const migrateTemplate = (p) => {
+    if (typeof p.templateText === 'string') return p.templateText;
+    if (typeof p.lensText === 'string') return p.lensText === '@universal' ? '' : p.lensText;
+    return '';
 };
 
 export function normalizeSettings(input) {
@@ -32,7 +36,7 @@ export function normalizeSettings(input) {
             id: String(p.id), name: String(p.name || p.id),
             source: SOURCES.has(p.source) ? p.source : 'current',
             sourceConfig: p.sourceConfig && typeof p.sourceConfig === 'object' ? { ...p.sourceConfig } : null,
-            lensText: typeof p.lensText === 'string' ? p.lensText : '',
+            templateText: migrateTemplate(p),
         }))
         : [];
     const profiles = cleaned.length > 0 ? cleaned : DEFAULT_SETTINGS.profiles.map(p => ({ ...p }));

@@ -7,7 +7,7 @@ function tryParse(str) {
 /**
  * 4-уровневый repair (идея — Glosses/src/parser.js, схема проще):
  * 1) JSON.parse как есть; 2) сбалансированный {...} внутри текста;
- * 3) умные кавычки + хвостовые запятые; 4) regex-достаём pulse/type/anchor.
+ * 3) умные кавычки + хвостовые запятые; 4) regex-достаём type/anchor.
  * Возвращает объект или null.
  */
 export function repairJson(raw) {
@@ -40,11 +40,10 @@ export function repairJson(raw) {
         .replace(/,\s*([}\]])/gu, '$1');
     const c2 = tryParse(cleaned);
     if (c2.ok) return c2.value;
-    const pulse = s.match(/["']?pulse["']?\s*[:=]\s*(true|false)/i);
-    if (pulse) {
+    const type = (s.match(/["']?type["']?\s*[:=]\s*["']([^"']*)["']/i) || [])[1];
+    if (type !== undefined) {
         return {
-            pulse: pulse[1].toLowerCase() === 'true',
-            type: (s.match(/["']?type["']?\s*[:=]\s*["']([^"']*)["']/i) || [])[1] || '',
+            type,
             // (?:[},]|$): значение anchor в конце строки не имеет хвостового разделителя
             anchor: (s.match(/["']?anchor["']?\s*[:=]\s*["']([\s\S]*?)["']\s*(?:[},]|$)/i) || [])[1] || '',
         };
@@ -80,8 +79,9 @@ function extractFence(segment) {
 
 /**
  * Разбор ответа контракта. Возвращает
- * { pulse: boolean, artifacts: [{type, anchor, html}], errors: string[] }.
- * pulse === false только когда ответ явно объявил pulse:false и артефакт не произведён.
+ * { artifacts: [{type, anchor, html}], errors: string[] }.
+ * Контракт запрещает отказ, поэтому «мусорный» ответ — это просто errors
+ * без артефактов; отдельной семантики «нет» не существует.
  * Опции: { maxBytes = 32768, maxCount = 5 }.
  */
 export function parseDiegeticResponse(raw, { maxBytes = 32768, maxCount = 5 } = {}) {
@@ -90,18 +90,14 @@ export function parseDiegeticResponse(raw, { maxBytes = 32768, maxCount = 5 } = 
     COMMENT_RE.lastIndex = 0;
     const comments = [...text.matchAll(COMMENT_RE)];
     if (comments.length === 0) {
-        const whole = repairJson(text);
-        if (whole && whole.pulse === false) return { pulse: false, artifacts: [], errors };
         errors.push('no DIEGETIC comment found');
-        return { pulse: true, artifacts: [], errors };
+        return { artifacts: [], errors };
     }
     const artifacts = [];
-    let sawPulseFalse = false;
     for (let ci = 0; ci < comments.length; ci++) {
         const cm = comments[ci];
         const meta = repairJson(cm[1]);
         if (!meta || typeof meta !== 'object' || Array.isArray(meta)) { errors.push(`bad meta JSON near index ${cm.index}`); continue; }
-        if (meta.pulse === false) { sawPulseFalse = true; continue; }
         const segStart = (cm.index ?? 0) + cm[0].length;
         const segEnd = ci + 1 < comments.length ? (comments[ci + 1].index ?? text.length) : text.length;
         const fence = extractFence(text.slice(segStart, segEnd));
@@ -112,5 +108,5 @@ export function parseDiegeticResponse(raw, { maxBytes = 32768, maxCount = 5 } = 
         artifacts.push({ type: String(meta.type || 'unknown'), anchor: String(meta.anchor || ''), html });
     }
     const kept = artifacts.slice(0, Math.max(1, maxCount));
-    return { pulse: kept.length > 0 ? true : !sawPulseFalse, artifacts: kept, errors };
+    return { artifacts: kept, errors };
 }

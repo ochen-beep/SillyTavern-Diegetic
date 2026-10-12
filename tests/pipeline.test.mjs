@@ -152,7 +152,7 @@ test('force + pulse=false без старых блоков: честный то�
   const { deps, messages, notifications } = makeDeps({ raw: '<!--DIEGETIC {"pulse":false}-->' });
   await createPipeline(deps).run(0, { force: true });
   assert.equal(messages[0].message, PROSE);
-  assert.ok(notifications.some(([, m]) => m.includes('импульса для артефакта нет')));
+  assert.ok(notifications.some(([, m]) => m.includes('модель отказалась от артефакта')));
 });
 
 test('abort mid-flight: stopGenerationById вызван с generation_id прогона', async () => {
@@ -212,7 +212,7 @@ test('источник profile: генерация через cmGenerate, genera
   assert.equal(received.profile.sourceConfig.profileId, 'prof-1');
   assert.match(received.system, /ЛИНЗА\[\]/);
   assert.match(received.system, /TOOL — DIEGETIC HTML/);
-  assert.match(received.user, /Пост \(найди импульсы в нём\)/);
+  assert.match(received.user, /Пост \(создай по нему артефакт\)/);
   assert.ok(messages[0].message.includes('<body><p>phone</p></body>'));
   assert.ok(notifications.some(([k]) => k === 'ready'));
 });

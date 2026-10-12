@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { DIEGETIC_CONTRACT, assemblePrompt, assemblePromptParts } from '../src/contract.js';
 import { parseDiegeticResponse } from '../src/parser.js';
 
@@ -55,10 +56,30 @@ test('round-trip: литерал pulse:false из контракта → pulse f
   assert.equal(r.artifacts.length, 0);
 });
 
-test('round-trip: pulse:false литерал ИЗ контракта парсится', () => {
-  const m = DIEGETIC_CONTRACT.match(/<!--DIEGETIC \{"pulse":false\}-->/);
-  assert.ok(m, 'в контракте обязан быть литерал pulse:false');
-  const r = parseDiegeticResponse(m[0], {});
+test('round-trip: pulse:false литерал парсится (защитный fallback парсера)', () => {
+  // Промпт больше не предлагает модели pulse:false, но парсер обязан его
+  // переживать — на случай, когда модель нарушает контракт.
+  const r = parseDiegeticResponse('<!--DIEGETIC {"pulse":false}-->', {});
   assert.equal(r.pulse, false);
   assert.equal(r.artifacts.length, 0);
+});
+
+test('контракт приказывает делать артефакт, а не решать, делать ли', () => {
+  // Требование: универсальный шаблон = команда. Никаких лазейок «импульса нет».
+  assert.ok(!/pulse":false|pulse:false/.test(DIEGETIC_CONTRACT), 'контракт не должен содержать литерал/упоминание pulse:false');
+  assert.match(DIEGETIC_CONTRACT, /ОБЯЗАТЕЛЕН/u);
+  assert.match(DIEGETIC_CONTRACT, /Отказ недопустим/u);
+});
+
+test('universal.md — императивная линза без отказных формулировок', () => {
+  const lens = readFileSync(new URL('../templates/universal.md', import.meta.url), 'utf8');
+  assert.ok(!/pulse:?false|"pulse":\s*false/u.test(lens), 'линза не должна предлагать pulse:false');
+  assert.ok(!/не выдумывай|если импульса нет|верни `?pulse:?false`?/iu.test(lens), 'линза не должна содержать отказных формулировок');
+  assert.match(lens, /ПО КАЖДОМУ ПОСТУ/u);
+  assert.match(lens, /это приказ, а не вопрос/u);
+  assert.match(lens, /Никогда не отказывайся/u);
+  assert.match(lens, /\{\{CONTRACT\}\}/u);
+  for (const t of ['messenger', 'note', 'polaroid', 'newspaper', 'terminal', 'dossier', 'grimoire', 'letter', 'sign']) {
+    assert.ok(lens.includes(`"${t}"`), `в палитре должен быть тип ${t}`);
+  }
 });

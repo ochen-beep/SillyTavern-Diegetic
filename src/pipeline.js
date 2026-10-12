@@ -79,7 +79,8 @@ export function createPipeline(deps) {
             const parsed = parseDiegeticResponse(raw, { maxBytes: s.maxArtifactBytes, maxCount: s.maxPerMessage });
             if (parsed.pulse === false) {
                 if (force) {
-                    // явная регенерация + «импульса нет»: снимаем устаревшие артефакты
+                    // явная регенерация + отказ модели (контракт запрещает отказ, но
+                    // модель могла его нарушить): снимаем устаревшие артефакты
                     const live = await getMsg(messageId);
                     if (!deps.coordinator.isCurrent(run)) return;
                     const liveText = String(live?.message ?? '');
@@ -93,11 +94,11 @@ export function createPipeline(deps) {
                         const next = recordArtifacts(vars, contentDigest(stripped), []);
                         writeVars(next);
                         await api.setChatMessages([{ message_id: Number(messageId), message: stripped }], { refresh: 'affected' });
-                        notify.ready('Diegetic: импульса нет — артефакт(ы) сняты');
+                        notify.ready('Diegetic: модель отказалась (нарушение контракта) — артефакт(ы) сняты');
                     } else {
-                        // ручная генерация без импульса: молчание выглядит как поломка —
-                        // честно сообщаем, что модель не нашла импульса и пост не тронут
-                        notify.ready('Diegetic: импульса для артефакта нет — пост не тронут');
+                        // ручная генерация с отказом: молчание выглядит как поломку —
+                        // честно сообщаем, что модель отказалась и пост не тронут
+                        notify.ready('Diegetic: модель отказалась от артефакта — пост не тронут');
                     }
                 }
                 return;

@@ -88,18 +88,25 @@ export function parseDiegeticResponse(raw, { maxBytes = 32768, maxCount = 5 } = 
     const text = String(raw ?? '');
     const errors = [];
     COMMENT_RE.lastIndex = 0;
-    const comments = [...text.matchAll(COMMENT_RE)];
-    if (comments.length === 0) {
+    // Не всякий <!--DIEGETIC…--> — заголовок артефакта: модель может оставить
+    // служебную пометку внутри HTML (например <!-- DIEGETIC PHOTO SLOT -->).
+    // Заголовок обязан чиниться до объекта; нечитаемый текст без '{' — это
+    // внутренняя пометка, а не сломанный заголовок: ни граница сегмента, ни ошибка.
+    const headers = [];
+    for (const cm of text.matchAll(COMMENT_RE)) {
+        const meta = repairJson(cm[1]);
+        if (meta && typeof meta === 'object' && !Array.isArray(meta)) { headers.push({ cm, meta }); continue; }
+        if (String(cm[1]).includes('{')) errors.push(`bad meta JSON near index ${cm.index}`);
+    }
+    if (headers.length === 0) {
         errors.push('no DIEGETIC comment found');
         return { artifacts: [], errors };
     }
     const artifacts = [];
-    for (let ci = 0; ci < comments.length; ci++) {
-        const cm = comments[ci];
-        const meta = repairJson(cm[1]);
-        if (!meta || typeof meta !== 'object' || Array.isArray(meta)) { errors.push(`bad meta JSON near index ${cm.index}`); continue; }
+    for (let hi = 0; hi < headers.length; hi++) {
+        const { cm, meta } = headers[hi];
         const segStart = (cm.index ?? 0) + cm[0].length;
-        const segEnd = ci + 1 < comments.length ? (comments[ci + 1].index ?? text.length) : text.length;
+        const segEnd = hi + 1 < headers.length ? (headers[hi + 1].cm.index ?? text.length) : text.length;
         const fence = extractFence(text.slice(segStart, segEnd));
         if (fence.error) { errors.push(`${fence.error} near index ${cm.index}`); continue; }
         const html = String(fence.html ?? '').trim();

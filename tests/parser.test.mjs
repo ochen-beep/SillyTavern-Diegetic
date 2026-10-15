@@ -81,3 +81,34 @@ test('CRLF: фенс с \\r\\n парсится', () => {
   assert.equal(r.artifacts.length, 1);
   assert.equal(r.artifacts[0].html, '<body><p>1</p></body>');
 });
+
+test('служебная пометка <!-- DIEGETIC PHOTO SLOT --> внутри HTML — не разделитель артефактов', () => {
+  const withMarker = `<!--DIEGETIC {"type":"phone","anchor":"взял телефон"}-->\n\`\`\`html\n<body>\n<!-- DIEGETIC PHOTO SLOT -->\n<div data-dg-img="img: снимок"></div>\n</body>\n\`\`\``;
+  const r = parseDiegeticResponse(withMarker, {});
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.artifacts.length, 1);
+  assert.equal(r.artifacts[0].type, 'phone');
+  assert.ok(r.artifacts[0].html.includes('PHOTO SLOT'));
+});
+
+test('несколько артефактов, у каждого внутренняя пометка PHOTO SLOT', () => {
+  const mk = (t, body) => `<!--DIEGETIC {"type":"${t}","anchor":"x"}-->\n\`\`\`html\n<body>${body}<!-- DIEGETIC PHOTO SLOT --></body>\n\`\`\``;
+  const r = parseDiegeticResponse(mk('phone', '1') + '\n' + mk('note', '2'), {});
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.artifacts.map(a => a.type), ['phone', 'note']);
+});
+
+test('нечитаемая DIEGETIC-пометка без { не даёт ни ошибки, ни разрыва сегмента', () => {
+  const withNoise = `<!--DIEGETIC заметка для себя-->\n\`\`\`html\n<body>ok</body>\n\`\`\`\n<!--DIEGETIC {"type":"phone","anchor":"x"}-->\n\`\`\`html\n<body>2</body>\n\`\`\``;
+  const r = parseDiegeticResponse(withNoise, {});
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.artifacts.length, 1);
+  assert.equal(r.artifacts[0].type, 'phone');
+});
+
+test('сломанная мета с { по-прежнему даёт bad meta JSON', () => {
+  const bad = `<!--DIEGETIC {"type": --\>\n\`\`\`html\n<body>1</body>\n\`\`\``;
+  const r = parseDiegeticResponse(bad, {});
+  assert.equal(r.artifacts.length, 0);
+  assert.ok(r.errors.some(e => e.startsWith('bad meta JSON')));
+});

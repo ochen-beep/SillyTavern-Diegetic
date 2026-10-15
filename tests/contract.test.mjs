@@ -21,10 +21,8 @@ test('контракт приказывает делать артефакт, а 
 test('universal.md — императивный шаблон без отказных формулировок', () => {
   const lens = readFileSync(new URL('../templates/universal.md', import.meta.url), 'utf8');
   assert.ok(!/pulse:?false|"pulse":\s*false/u.test(lens), 'шаблон не должен предлагать pulse:false');
-  assert.ok(!/не выдумывай|если импульса нет/iu.test(lens), 'шаблон не должен содержать отказных формулировок');
-  assert.match(lens, /ПО КАЖДОМУ ПОСТУ/u);
-  assert.match(lens, /это приказ, а не вопрос/u);
-  assert.match(lens, /Никогда не отказывайся/u);
+  assert.ok(!/не выдумывай|если импульса нет|you may skip|optional to skip/iu.test(lens), 'шаблон не должен содержать отказных формулировок');
+  assert.match(lens, /mandatory/iu);
   assert.match(lens, /\{\{CONTRACT\}\}/u);
 });
 

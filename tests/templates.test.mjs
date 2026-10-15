@@ -8,15 +8,30 @@ import { fileURLToPath } from 'node:url';
 const dir = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
 const files = readdirSync(dir).filter(f => f.endsWith('.md'));
 const uni = readFileSync(join(dir, 'universal.md'), 'utf8');
+const photo = readFileSync(join(dir, 'universal-photo.md'), 'utf8');
 
-test('в templates/ — ровно один встроенный шаблон', () => {
-  assert.deepEqual(files, ['universal.md']);
+test('в templates/ — ровно две встроенные основы', () => {
+  assert.deepEqual(files.sort(), ['universal-photo.md', 'universal.md']);
 });
 
-test('universal: {{CONTRACT}} ровно один раз, палитра типов объявлена', () => {
-  const markers = uni.split('{{CONTRACT}}').length - 1;
-  assert.equal(markers, 1, 'маркер {{CONTRACT}} обязан быть ровно один');
-  for (const expected of ['messenger', 'note', 'polaroid', 'newspaper', 'terminal', 'dossier', 'grimoire', 'letter', 'sign']) {
-    assert.ok(uni.includes(`type: "${expected}"`), `в палитре нет ${expected}`);
+test('обе основы: {{CONTRACT}} ровно один раз, без отказных формулировок', () => {
+  for (const [name, text] of [['universal', uni], ['universal-photo', photo]]) {
+    assert.equal(text.split('{{CONTRACT}}').length - 1, 1, `${name}: маркер {{CONTRACT}} обязан быть ровно один`);
+    assert.ok(!/pulse:?false|"pulse":\s*false/u.test(text), `${name}: без pulse:false`);
+    assert.ok(!/не выдумывай|если импульса нет|you may skip|optional to skip/iu.test(text), `${name}: без отказных лазеек`);
   }
+});
+
+test('universal: скевоморфизм, обязательная интерактивность, русский текст', () => {
+  assert.match(uni, /Skeuomorphic/u);
+  assert.match(uni, /Interaction \(mandatory\)/u);
+  assert.match(uni, /All text in Russian/u);
+});
+
+test('universal-photo: фото через data-dg-img слоты с триггерами', () => {
+  assert.ok(photo.includes('data-dg-img'), 'фото-вариант использует нашу механику слотов');
+  for (const trigger of ['selfie', 'img', 'scene']) {
+    assert.ok(photo.includes(`\`${trigger}\``), `нет триггера ${trigger}`);
+  }
+  assert.ok(photo.includes('CSS-плейсхолдер'), 'плейсхолдер-фолбэк обязателен');
 });

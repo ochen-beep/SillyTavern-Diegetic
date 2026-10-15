@@ -1,11 +1,21 @@
-// src/pipeline.js
+// src/pipeline.js — оркестрация генерации и фотослотов.
+// Нативная модель: артефакты живут в extra сообщения (payload.js), текст поста
+// не трогается никогда. Commit-гард — coordinator.isCurrent + digest прозы.
+// Текст не перезаписываем, поэтому весь класс гонок «перезаписали чужую правку»
+// сведён к сверке digest перед записью payload.
+
 import { contentDigest, isViableMessageText } from './digest.js';
 import { findAnchorInText, findFuzzySpan } from './anchor.js';
-import { hasOwnBlock, stripOwnBlocks, paragraphEndAfter, applyInsertions } from './paragraph.js';
 import { parseDiegeticResponse } from './parser.js';
-import { assemblePrompt, assemblePromptParts } from './contract.js';
-import { buildGenerateConfig, generationIdFor } from './source.js';
-import { META_KEY, recordArtifacts, removeDigest } from './meta.js';
+import { assemblePromptParts } from './contract.js';
+import {
+    readRawPayload, readVerifiedPayload, stampPayload, writePayload,
+    variantText, digestForVariant,
+} from './payload.js';
+import {
+    parseImageSlots, hasPendingSlots, setSlotState,
+    injectSlotImage, replaceSlotImage, generateSlotImage, getUrisBridge,
+} from './images.js';
 
 const byteLength = (s) => new TextEncoder().encode(s).length;
 
@@ -19,118 +29,172 @@ export function isExcluded(prose, phrases) {
 }
 
 export function createPipeline(deps) {
-    const { api, notify, getContextBlock } = deps;
-
-    const chatVars = () => api.getVariables() || {};
-    const writeVars = (vars) => api.insertOrAssignVariables({ [META_KEY]: vars[META_KEY] });
+    // Хост-функции — через deps (тест-шов), реализация — src/host.js.
+    // Обращение — в точке вызова, не деструктуризацией: тесты подменяют
+    // deps.generateText между прогонами.
+    const { notify } = deps;
     const activeProfile = () => deps.settings.profiles.find(p => p.id === deps.settings.activeProfile) || deps.settings.profiles[0];
-    const getMsg = async (id) => {
-        const list = await api.getChatMessages(String(id));
-        return Array.isArray(list) ? list[0] : null;
-    };
 
     async function _run(messageId, { force = false } = {}) {
         const s = deps.settings;
-        // force (панель/оверлей) работает и при выключенном авторежиме — спека §10
+        // force (панель/оверлей) работает и при выключенном авторежиме
         if (!s.enabled && !force) return;
-        const msg = await getMsg(messageId);
-        if (!msg || msg.role !== 'assistant') return;
-        const text = String(msg.message ?? '');
-        if (!isViableMessageText(text)) return;
-        if (hasOwnBlock(text) && !force) return;
-        const prose = stripOwnBlocks(text);
+        const msg = deps.getMessage(messageId);
+        if (!msg || msg.is_user || msg.is_system) return;
+        const swipeIdx = msg.swipe_id ?? 0;
+        const prose = variantText(msg, swipeIdx);
+        if (!isViableMessageText(prose)) return;
+        // payload уже есть — не дублим (force перезаписывает тот же слот)
+        if (!force && readRawPayload(msg, swipeIdx)) return;
         const proseDigest = contentDigest(prose);
 
         const run = deps.coordinator.beginRun(messageId);
         try {
-            const genId = generationIdFor(messageId, run.token);
-            run.ctrl.signal.addEventListener('abort', () => api.stopGenerationById?.(genId));
             const profile = activeProfile();
-            // resolveTemplate (main.js): '' у профиля → встроенный универсальный шаблон.
-            const templateText = deps.resolveTemplate ? deps.resolveTemplate(profile) : (profile?.templateText ?? '');
+            // resolveTemplate async: встроенный шаблон тянется fetch'ем (core.js)
+            const templateText = await deps.resolveTemplate(profile);
+            const { system, user } = assemblePromptParts({
+                templateText, postText: prose,
+                contextBlock: deps.getContextBlock ? await deps.getContextBlock(messageId, s.contextDepth) : '',
+                maxCount: s.maxPerMessage,
+            });
             let raw;
             try {
-                if (profile?.source === 'profile') {
-                    // Источник «профиль подключения» (Connection Manager, как в DS-Comments):
-                    // sendRequest принимает сообщения ролями, generateRaw здесь не участвует.
-                    const { system, user } = assemblePromptParts({
-                        templateText, postText: prose,
-                        contextBlock: getContextBlock ? await getContextBlock(messageId, s.contextDepth) : '',
-                        maxCount: s.maxPerMessage,
-                    });
-                    raw = await api.cmGenerate({ system, user, profile, signal: run.ctrl.signal });
-                } else {
-                    const prompt = assemblePrompt({
-                        templateText,
-                        postText: prose,
-                        // await: провайдер контекста может быть асинхронным; на синхронном await безвреден
-                        contextBlock: getContextBlock ? await getContextBlock(messageId, s.contextDepth) : '',
-                        maxCount: s.maxPerMessage,
-                    });
-                    raw = await api.generateRaw(buildGenerateConfig({ prompt, profile, contextDepth: s.contextDepth, generationId: genId }));
-                }
+                raw = await deps.generateText({ system, user, profile, signal: run.ctrl.signal });
             } catch (e) {
-                notify.error(`Diegetic: генерация не удалась (${e?.message || e})`);
+                if (e?.name !== 'AbortError') notify.error(`Diegetic: генерация не удалась (${e?.message || e})`);
                 return;
             }
             if (!deps.coordinator.isCurrent(run)) return;
 
             const parsed = parseDiegeticResponse(raw, { maxBytes: s.maxArtifactBytes, maxCount: s.maxPerMessage });
             if (parsed.artifacts.length === 0) {
-                // Контракт запрещает отказ, так что это именно сбой модели: пост и
-                // уже встроенные артефакты не трогаем — регенерация заменит их только успехом.
+                // Контракт запрещает отказ, так что это именно сбой модели.
                 notify.error(`Diegetic: модель не вернула артефакт (${parsed.errors[0] || 'нет пар комментарий+fence'})`);
                 return;
             }
 
-            const insertions = [];
-            const recorded = [];
-            for (const art of parsed.artifacts) {
-                let span = art.anchor ? findAnchorInText(prose, art.anchor) : null;
+            // Якорная валидация против сырой прозы — как раньше.
+            const recorded = parsed.artifacts.map((art, i) => {
                 let status = 'ok';
+                let span = art.anchor ? findAnchorInText(prose, art.anchor) : null;
                 if (!span && art.anchor) { span = findFuzzySpan(prose, art.anchor); if (span) status = 'fuzzy'; }
-                if (!span) { recorded.push({ type: art.type, anchor: art.anchor, status: 'orphan', html: art.html }); continue; }
-                insertions.push({ at: paragraphEndAfter(prose, span.end), html: art.html });
-                recorded.push({ type: art.type, anchor: art.anchor, status, html: art.html });
-            }
+                if (!span) status = 'orphan';
+                return {
+                    id: `${proseDigest}:${i}`, type: art.type, anchor: art.anchor, status,
+                    html: art.html, bytes: byteLength(art.html), createdAt: Date.now(), profileId: profile.id,
+                };
+            });
 
-            const live = await getMsg(messageId);
-            const liveText = String(live?.message ?? '');
-            const liveProse = hasOwnBlock(liveText) ? stripOwnBlocks(liveText) : liveText;
-            if (!deps.coordinator.isCurrent(run) || liveProse !== prose) return;
+            // Commit-гард: прогон актуален и проза не сменилась за время генерации.
+            const live = deps.getMessage(messageId);
+            if (!live || !deps.coordinator.isCurrent(run) || digestForVariant(live, swipeIdx) !== proseDigest) return;
 
-            const baseText = force ? stripOwnBlocks(liveText) : liveText;
-            let newMessage = baseText;
-            if (insertions.length > 0) {
-                const applied = applyInsertions(baseText, insertions);
-                if (!applied) return;
-                newMessage = applied.text;
-            }
+            const payload = stampPayload(live, swipeIdx, recorded);
+            if (!payload || !writePayload(live, swipeIdx, payload)) return;
+            await deps.persistChat();
+            deps.notifyRender?.(messageId);
 
-            // read-modify-write без await: синхронный блок, атомарен в JS-однопоточности.
-            // Пишем ТОЛЬКО наш ключ: insertOrAssignVariables делает глубокий merge,
-            // чужие ключи других расширений сохраняются, а их устаревшие сиблинги не воскресают.
-            let vars = chatVars();
-            if (force) vars = removeDigest(vars, proseDigest);
-            vars = recordArtifacts(vars, proseDigest, recorded.map((a, i) => ({
-                id: `${proseDigest}:${i}`, type: a.type, anchor: a.anchor, status: a.status,
-                bytes: byteLength(a.html), createdAt: Date.now(), profileId: profile.id,
-            })));
-            writeVars(vars);
-
-            if (newMessage !== liveText) {
-                await api.setChatMessages([{ message_id: Number(messageId), message: newMessage }], { refresh: 'affected' });
-            }
             const orphans = recorded.filter(a => a.status === 'orphan').length;
             if (orphans > 0) notify.error(`Diegetic: ${orphans} артефакт(ов) не нашли якорь — см. панель`);
             else notify.ready(`Diegetic: артефакт(ов): ${recorded.length}`);
+
+            if (s.imageMode === 'auto' && recorded.some(a => hasPendingSlots(a.html))) fillImageSlots(messageId);
         } finally {
             deps.coordinator.endRun(run);
         }
     }
 
-    // run() никогда не реджектится: обработчики событий fire-and-forget —
-    // необработанный rejection из getMsg/setChatMessages умер бы молча.
-    return { run: (messageId, opts = {}) =>
-        _run(messageId, opts).catch((e) => notify.error(`Diegetic: сбой (${e?.message || e})`)) };
+    /**
+     * Заполнить фотослоты артефактов сообщения через мост URIS. Payload
+     * перечитывается перед каждым слотом и каждой записью: свайп/правка
+     * (digest сменился) прерывают заливку — платный результат не вписывается
+     * в чужой текст. Оплаченный слот (done) не откатывается.
+     * opts.artifactId + opts.onlyOrdinal — точечная перегенерация одного слота;
+     * opts.removeCardId — карточка URIS прошлого фото, удаляется после успеха.
+     */
+    async function _fillImageSlots(messageId, { artifactId = null, onlyOrdinal = null, removeCardId = null } = {}) {
+        const s = deps.settings;
+        if (s.imageMode === 'off') return;
+        const read = () => {
+            const m = deps.getMessage(messageId);
+            if (!m) return null;
+            return readVerifiedPayload(m, m.swipe_id ?? 0);
+        };
+        const write = (payload) => {
+            const m = deps.getMessage(messageId);
+            if (!m || !writePayload(m, m.swipe_id ?? 0, payload)) return false;
+            deps.persistChat();
+            deps.notifyRender?.(messageId);
+            return true;
+        };
+        const mutateArtifact = (baseDigest, aid, fn) => {
+            const p = read();
+            if (!p || p.contentDigest !== baseDigest) return false;
+            const idx = p.artifacts.findIndex(a => a.id === aid);
+            if (idx < 0) return false;
+            const html = fn(p.artifacts[idx].html);
+            if (html === null || html === undefined) return false;
+            const artifacts = p.artifacts.slice();
+            artifacts[idx] = { ...p.artifacts[idx], html, bytes: byteLength(html) };
+            return write({ ...p, artifacts });
+        };
+
+        const base = read();
+        if (!base) return;
+        const baseDigest = base.contentDigest;
+        const targets = [];
+        base.artifacts.forEach((a, ai) => {
+            if (artifactId !== null && a.id !== artifactId) return;
+            for (const sl of parseImageSlots(a.html)) {
+                if (onlyOrdinal === null ? sl.state !== 'done' : sl.ordinal === onlyOrdinal) {
+                    targets.push({ artifactId: a.id, slot: sl });
+                }
+            }
+        });
+        if (!targets.length) return;
+
+        let firstError = null;
+        for (const { artifactId: aid, slot } of targets) {
+            if (!mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, 'loading'))) return;
+            try {
+                const res = await generateSlotImage(slot, { quality: s.imageQuality, imageSize: '1K' });
+                const ok = mutateArtifact(baseDigest, aid, (html) =>
+                    replaceSlotImage(html, slot.ordinal, res.imagePath, res.cardId)
+                    ?? injectSlotImage(html, slot.ordinal, res.imagePath, res.cardId));
+                if (!ok) return; // digest ушёл или слот исчез — платный результат не пишем в чужое
+                if (removeCardId) {
+                    try { await getUrisBridge()?.removeCard(removeCardId, { caller: 'sthtml' }); } catch { /* галерея — некритично */ }
+                }
+            } catch (e) {
+                if (e?.code === 'ABORTED' || e?.name === 'AbortError') {
+                    mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, null));
+                    return;
+                }
+                if (!mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, 'error'))) return;
+                firstError = firstError || e;
+            }
+        }
+        if (firstError) notify.error(`Diegetic: фото не сгенерировано (${firstError?.message || firstError})`);
+        else notify.ready('Diegetic: фото готово');
+    }
+
+    /** Есть ли незаполненные фотослоты у артефактов сообщения (для 📷-кнопки). */
+    function hasPendingPhotoSlots(messageId) {
+        const m = deps.getMessage(messageId);
+        if (!m) return false;
+        const p = readVerifiedPayload(m, m.swipe_id ?? 0);
+        return !!p?.artifacts.some(a => hasPendingSlots(a.html));
+    }
+
+    // run() и fillImageSlots() никогда не реджектятся: обработчики событий fire-and-forget.
+    const fillImageSlots = (messageId, opts = {}) =>
+        _fillImageSlots(messageId, opts).catch((e) => notify.error(`Diegetic: сбой фотослотов (${e?.message || e})`));
+
+    return {
+        run: (messageId, opts = {}) =>
+            _run(messageId, opts).catch((e) => notify.error(`Diegetic: сбой (${e?.message || e})`)),
+        fillImageSlots,
+        hasPendingPhotoSlots,
+    };
 }

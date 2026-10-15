@@ -1,0 +1,18 @@
+{
+    "display_name": "Diegetic",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "dependencies": [],
+    "js": "index.js",
+    "author": "beep",
+    "version": "1.0.0",
+    "auto_update": false,
+    "minimum_client_version": "1.19.0",
+    "hooks": {
+        "activate": "onActivate",
+        "enable": "onEnable",
+        "disable": "onDisable",
+        "clean": "onClean"
+    }
+}

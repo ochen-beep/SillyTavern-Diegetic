@@ -99,3 +99,17 @@ test('мусорный source деградирует в current', () => {
   const s = normalizeSettings({ profiles: [{ id: 'x', name: 'X', source: 'kek' }] });
   assert.equal(s.profiles[0].source, 'current');
 });
+
+test('displayMode: валидный сохраняется, мусор — inline', () => {
+    assert.equal(normalizeSettings({ displayMode: 'popup' }).displayMode, 'popup');
+    assert.equal(normalizeSettings({ displayMode: 'expand' }).displayMode, 'expand');
+    assert.equal(normalizeSettings({ displayMode: 'fullscreen' }).displayMode, 'inline');
+    assert.equal(normalizeSettings({}).displayMode, 'inline');
+});
+
+test('builtin: валидная основа сохраняется, мусор — universal', () => {
+    const p = normalizeSettings({ profiles: [{ id: 'a', builtin: 'universal-photo' }] }).profiles[0];
+    assert.equal(p.builtin, 'universal-photo');
+    assert.equal(normalizeSettings({ profiles: [{ id: 'a', builtin: 'nope' }] }).profiles[0].builtin, 'universal');
+    assert.equal(normalizeSettings({}).profiles[0].builtin, 'universal');
+});

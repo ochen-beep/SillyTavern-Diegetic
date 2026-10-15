@@ -5,21 +5,28 @@ export const DEFAULT_SETTINGS = Object.freeze({
     contextDepth: 3,           // сколько предыдущих сообщений идут в вызов контекстом
     maxArtifactBytes: 32768,
     appearance: 'toast',       // 'silent' | 'toast'
+    imageMode: 'button',       // 'off' | 'button' | 'auto' — фотослоты через мост URIS
+    imageQuality: 'medium',    // 'low' | 'medium' | 'high' — quality для URIS generate()
+    displayMode: 'inline',     // 'inline' | 'expand' | 'popup' — как артефакт показан в посте
     activeProfile: 'default',
     profiles: [
-        { id: 'default', name: 'Универсальный', source: 'current', sourceConfig: null, templateText: '' },
+        { id: 'default', name: 'Универсальный', source: 'current', sourceConfig: null, templateText: '', builtin: 'universal' },
     ],
 });
 
 const APPEARANCES = new Set(['silent', 'toast']);
 const SOURCES = new Set(['current', 'custom', 'profile']);
+const IMAGE_MODES = new Set(['off', 'button', 'auto']);
+const IMAGE_QUALITIES = new Set(['low', 'medium', 'high']);
+const DISPLAY_MODES = new Set(['inline', 'expand', 'popup']);
+const BUILTINS = new Set(['universal', 'universal-photo']);
 // «Мусор — дефолты»: нечисловое или выходящее за [lo, hi] значение даёт дефолт, а не границу диапазона.
 const bounded = (v, lo, hi, dflt) => {
     const n = Math.round(Number(v));
     return Number.isFinite(n) && n >= lo && n <= hi ? n : dflt;
 };
 
-// templateText '' = встроенный универсальный шаблон из бандла (резолвится в main.js).
+// templateText '' = встроенный универсальный шаблон (резолвится через core.getUniversalTemplate).
 // Миграция: lensText старых сохранённых профилей (включая сентинел '@universal') переезжает в templateText.
 const migrateTemplate = (p) => {
     if (typeof p.templateText === 'string') return p.templateText;
@@ -37,6 +44,7 @@ export function normalizeSettings(input) {
             source: SOURCES.has(p.source) ? p.source : 'current',
             sourceConfig: p.sourceConfig && typeof p.sourceConfig === 'object' ? { ...p.sourceConfig } : null,
             templateText: migrateTemplate(p),
+            builtin: BUILTINS.has(p.builtin) ? p.builtin : 'universal',
         }))
         : [];
     const profiles = cleaned.length > 0 ? cleaned : DEFAULT_SETTINGS.profiles.map(p => ({ ...p }));
@@ -51,6 +59,9 @@ export function normalizeSettings(input) {
         contextDepth: bounded(raw.contextDepth, 1, 20, DEFAULT_SETTINGS.contextDepth),
         maxArtifactBytes: bounded(raw.maxArtifactBytes, 1024, 131072, DEFAULT_SETTINGS.maxArtifactBytes),
         appearance: APPEARANCES.has(raw.appearance) ? raw.appearance : DEFAULT_SETTINGS.appearance,
+        imageMode: IMAGE_MODES.has(raw.imageMode) ? raw.imageMode : DEFAULT_SETTINGS.imageMode,
+        imageQuality: IMAGE_QUALITIES.has(raw.imageQuality) ? raw.imageQuality : DEFAULT_SETTINGS.imageQuality,
+        displayMode: DISPLAY_MODES.has(raw.displayMode) ? raw.displayMode : DEFAULT_SETTINGS.displayMode,
         profiles,
         activeProfile,
     };

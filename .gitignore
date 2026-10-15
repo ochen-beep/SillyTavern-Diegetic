@@ -1,4 +1,9 @@
+.zcode/
 node_modules/
-dist/
-tests/harness/diegetic.js
-tests/harness/jquery-3.5.1.min.js
+Thumbs.db
+desktop.ini
+*.log
+
+# Internal dev docs, not part of the distributed extension
+PROJECT_MAP.md
+docs/

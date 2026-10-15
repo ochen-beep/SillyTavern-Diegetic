@@ -27,8 +27,13 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 
 // Артефакт — полноценный документ со скриптами; песочница opaque-origin,
 // allow-same-origin НЕ давать (иначе скрипт артефакта достаёт parent DOM).
-// Высота — postMessage-рукопожатие: сниппет дописывается к srcdoc.
+// Высота — postMessage-рукопожатие; html принудительно прозрачный и без
+// скроллбаров (иммерсивная вставка — скролл внутри артефакта не трогаем).
+const IMMERSIVE_CSS = '<style>html{background:transparent!important;overflow:hidden!important}</style>';
 const RESIZE_SNIPPET = '<script>(function(){var p=function(){try{parent.postMessage({__dgH:document.documentElement.scrollHeight},"*")}catch(e){}};if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}addEventListener("load",p);p()})()</' + 'script>';
+const withImmersiveCss = (html) => /<head[^>]*>/i.test(String(html))
+    ? String(html).replace(/<head[^>]*>/i, (m) => m + IMMERSIVE_CSS)
+    : String(html).replace(/<html[^>]*>/i, (m) => m + '<head>' + IMMERSIVE_CSS + '</head>');
 const clampH = (h) => Math.min(Math.max(40, Math.round(h) || 0), 4000);
 
 let _observer = null;
@@ -37,10 +42,69 @@ let _onMessage = null;
 let _onClick = null;
 let _popup = null;
 let _deps = null;
-/** Раскрытые в expand-режиме оболочки (shellKey). Рантайм, не настройка. */
+/** Раскрытые в expand-режиме оболочки (baseKey). Рантайм, не настройка. */
 const _expanded = new Set();
+/** path → dataUrl (фото /user/images проксируются в data: — CORP: same-origin
+ *  хоста не даёт opaque-iframe грузить их напрямую); null = загрузка идёт. */
+const _imgCache = new Map();
 
-const shellKey = (a) => `${a.id}|${contentDigest(a.html)}`;
+const baseKey = (a) => `${a.id}|${contentDigest(a.html)}`;
+/** inline — всегда iframe; expand — по памяти раскрытий; popup — всегда чип. */
+const isOpen = (a) => {
+    const mode = _deps?.settings?.().displayMode ?? 'inline';
+    if (mode === 'inline') return true;
+    if (mode === 'expand') return _expanded.has(baseKey(a));
+    return false;
+};
+const shellKey = (a) => `${baseKey(a)}|${isOpen(a) ? 'o' : 'c'}`;
+
+/**
+ * Display-патч хранённых артефактов (текст extra не переписываем): старые
+ * инжекты фото шли с z-index:1 и без скрытия плейсхолдера — модели кладут декор
+ * плейсхолдера на z-index:2+, и он перекрывал фото. Новые инжекты (images.js)
+ * пишут z-index:10 + hide-style сразу.
+ */
+function patchStoredArtifact(html) {
+    const s = String(html ?? '');
+    if (!/dg-slot-img/.test(s)) return s;
+    let out = s.replace(/(dg-slot-img[^>]*z-index:\s*)1\s*;/g, '$110;');
+    if (/dg-slot-img/.test(out) && /\.css-placeholder/.test(out) && !out.includes('css-placeholder{display:none')) {
+        out = out.replace(/<\/body>/i, '<style>.css-placeholder{display:none!important}</style></body>');
+    }
+    return out;
+}
+
+/** Подставить закэшированные фото (data:) в html оболочки. */
+function withCachedImages(html) {
+    return String(html).replace(/src="(\/user\/images\/[^"]+)"/g, (m, p) => {
+        const d = _imgCache.get(p);
+        return d ? `src="${d}"` : m;
+    });
+}
+
+/**
+ * Фото из /user/images недоступны opaque-iframe напрямую (CORP: same-origin
+ * хоста) — тянем их из родительского окна в data: и переливаем в готовый
+ * iframe. Ошибка загрузки — исходный src остаётся (не наш хост — не чиним).
+ * Возвращает промис: resolves, когда все пути html прогреты (успешно или нет).
+ */
+function warmImages(html) {
+    const paths = [...new Set([...String(html).matchAll(/src="(\/user\/images\/[^"]+)"/g)].map(m => m[1]))]
+        .filter(p => !_imgCache.has(p));
+    return Promise.all(paths.map(p => {
+        _imgCache.set(p, null);
+        return fetch(p)
+            .then(r => r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`)))
+            .then(blob => new Promise((res, rej) => {
+                const fr = new FileReader();
+                fr.onload = () => res(fr.result);
+                fr.onerror = rej;
+                fr.readAsDataURL(blob);
+            }))
+            .then(dataUrl => { _imgCache.set(p, dataUrl); })
+            .catch(() => { _imgCache.delete(p); });
+    }));
+}
 
 /** Блоки-абзацы сообщения. У plain-текста без <p> весь .mes_text — один блок. */
 function blocksOf(textEl) {
@@ -71,12 +135,12 @@ function locateBlock(blocks, artifact) {
 const escAttr = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function buildShell(artifact, key, msgId) {
-    const mode = _deps?.settings?.().displayMode ?? 'inline';
+    const open = isOpen(artifact);
     const shell = document.createElement('div');
     shell.setAttribute(SHELL_ATTR, key);
     shell.setAttribute('data-dg-msg', String(msgId));
-    if (mode !== 'inline' && !_expanded.has(key)) {
-        // Чип-ряд вместо артефакта (скрин HTML-Inserts): тип + Copy + Delete.
+    if (!open) {
+        // Чип-ряд вместо артефакта: тип + Copy + Delete.
         shell.className = 'dg-shell dg-chiprow';
         const open = document.createElement('button');
         open.type = 'button';
@@ -101,8 +165,13 @@ function buildShell(artifact, key, msgId) {
     frame.className = FRAME_CLASS;
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.setAttribute('title', String(artifact.type || 'artifact'));
-    frame.srcdoc = String(artifact.html) + RESIZE_SNIPPET;
+    const html = patchStoredArtifact(artifact.html);
+    frame.srcdoc = withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET;
     shell.appendChild(frame);
+    // Догреть кэш фото и перелить в iframe, когда data: готовы.
+    warmImages(html).then(() => {
+        if (frame.isConnected) frame.srcdoc = withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET;
+    });
     return shell;
 }
 
@@ -160,7 +229,11 @@ function openPopup(artifact) {
     overlay.innerHTML = `<div class="dg-popup-backdrop" data-dg-close></div><section class="dg-popup-dialog" role="dialog" aria-modal="true"><header><strong>${escAttr(artifact.type || 'artifact')}</strong><button type="button" class="dg-popup-close" data-dg-close aria-label="Закрыть">×</button></header></section>`;
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
-    frame.srcdoc = String(artifact.html);
+    const html = withImmersiveCss(patchStoredArtifact(String(artifact.html)));
+    frame.srcdoc = withCachedImages(html);
+    warmImages(html).then(() => {
+        if (overlay.isConnected) frame.srcdoc = withCachedImages(html);
+    });
     overlay.querySelector('.dg-popup-dialog').appendChild(frame);
     overlay.addEventListener('click', (e) => { if (e.target.closest('[data-dg-close]')) closePopup(); });
     document.body.appendChild(overlay);
@@ -171,10 +244,17 @@ function onKeydown(e) {
     if (e.key === 'Escape') closePopup();
 }
 
-/** Кнопки поста в .mes_buttons (форма Glosses): ◆ генерация/реген, 📷 фотослоты. */
+/** Кнопки поста в .mes_buttons (форма Glosses): ◆ генерация/реген, 📷 фотослоты.
+ *  Видны только в режиме buttonMode 'post'; busy-класс вешает setGenerating. */
 function ensureMsgButtons(mesEl, msgId, msg) {
     const btns = mesEl.querySelector('.mes_buttons');
-    if (!btns || !msg || msg.is_user || msg.is_system) return;
+    if (!btns) return;
+    if (_deps?.settings?.().buttonMode !== 'post') {
+        btns.querySelector('.dg-gen-btn')?.remove();
+        btns.querySelector('.dg-photo-btn')?.remove();
+        return;
+    }
+    if (!msg || msg.is_user || msg.is_system) return;
     const hasPayload = !!readRawPayload(msg, msg.swipe_id ?? 0);
     let gen = btns.querySelector('.dg-gen-btn');
     if (!gen) {
@@ -200,6 +280,12 @@ function ensureMsgButtons(mesEl, msgId, msg) {
     } else if (!wantCam && cam) {
         cam.remove();
     }
+}
+
+/** Индикатор занятости на всех кнопках генерации (пост/QR-бар/FAB). */
+export function setGenerating(on) {
+    if (typeof document === 'undefined') return;
+    document.querySelectorAll('.dg-gen-btn, .dg-launcher-btn').forEach(b => b.classList.toggle('dg-busy', on));
 }
 
 /**
@@ -301,7 +387,7 @@ export function reconcile({ only = null } = {}) {
     if (!scope) return;
     for (const mesEl of scope.querySelectorAll('.mes')) {
         if (only && !only.has(Number(mesEl.getAttribute('mesid')))) continue;
-        try { reconcileMes(mesEl); } catch { /* один пост не роняет проход */ }
+        try { reconcileMes(mesEl); } catch (e) { try { globalThis.__dgErr = String(e?.stack || e); } catch { /* игнорируем */ } }
     }
 }
 
@@ -330,7 +416,7 @@ function onDocumentClick(e) {
                 const a = artifactByKey(msgId, key);
                 if (a) openPopup(a);
             } else {
-                _expanded.add(key);
+                _expanded.add(String(key).replace(/\|[oc]$/, ''));
                 reconcileMessage(msgId);
             }
             return;
@@ -353,6 +439,8 @@ function onDocumentClick(e) {
 export function initRender(deps = {}) {
     if (typeof window === 'undefined') return;
     _deps = deps;
+    // Отладочный хук (стенд): window.__diegetic.reconcile() вручную.
+    try { globalThis.__diegetic = { reconcile, setGenerating, deps: () => _deps }; } catch { /* не критично */ }
     if (!_onMessage) {
         _onMessage = (e) => {
             const h = e?.data?.__dgH;

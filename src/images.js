@@ -109,9 +109,11 @@ function slotImgHtml(ordinal, imagePath, cardId) {
     const src = escapeAttr(publicImageSrc(imagePath));
     const card = cardId ? ` ${SLOT_CARD_ATTR}="${escapeAttr(cardId)}"` : '';
     const img = `<img class="${SLOT_IMG_CLASS}"${card} src="${src}" alt="" `
-        + 'style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;"/>';
+        + 'style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:10;"/>';
     const btn = `<span class="dg-slot-regen" data-ordinal="${ordinal}" title="Перегенерировать фото">⟳</span>`;
-    return img + btn;
+    // Плейсхолдер отработал — прячем его слои (модели любят z-index:2 на декоре
+    // плейсхолдера, которое иначе перекрывает фото с z-index:10... и z-index:1).
+    return img + btn + '<style>.css-placeholder{display:none!important}</style>';
 }
 
 /**

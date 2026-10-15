@@ -1,7 +1,9 @@
 // src/ui.js — настройки в разделе «Расширения» таверны (inline-drawer, форма
-// Glosses), плавающей панели и FAB/QR-лаунчера больше нет: действия у поста —
-// кнопки в .mes_buttons (render.js). Делегированные обработчики — на document
-// в namespace .diegetic (off перед bind: повторный init не задваивает их).
+// Glosses) + лаунчер кнопки генерации (QR-бар / плавающая, режим buttonMode).
+// Контролы — нативные классы ST (text_pole, menu_button): тема и вид бесплатно.
+// Делегированные обработчики — на document в namespace .diegetic и scoped к
+// #dg-ext: старый runner-скрипт рисует панель с теми же id — наши обработчики
+// не должны на него срабатывать.
 import { readRawPayload, digestForVariant } from './payload.js';
 
 /** Чистая: строки списка артефактов для панели — скан extra всего чата.
@@ -24,31 +26,17 @@ export function collectRows(chat) {
 }
 
 const CSS = `
-#dg-ext .dg-body { font-size: 13px; line-height: 1.45; }
+#dg-ext { font-size: 13px; line-height: 1.45; }
 #dg-ext .dg-section { border-top: 1px dashed var(--SmartThemeBorderColor, rgba(255,255,255,.12));
   padding: 10px 0 4px; margin-top: 6px; }
 #dg-ext .dg-title { font-weight: 600; font-size: 12.5px; margin: 0 0 7px; opacity: .85; }
 #dg-ext .dg-hint { opacity: .6; font-size: 12px; margin: 4px 0 0; }
-#dg-ext select, #dg-ext input[type=text], #dg-ext input[type=number], #dg-ext input[type=password],
-#dg-ext textarea { width: 100%; box-sizing: border-box; background: var(--black30, rgba(0,0,0,.25));
-  color: var(--SmartThemeBodyColor, #ddd); border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.15));
-  border-radius: 8px; padding: 6px 8px; font-size: 13px; }
-#dg-ext textarea { resize: vertical; font-family: var(--monoFontFamily, monospace); font-size: 12px; }
-#dg-ext select:focus, #dg-ext input:focus, #dg-ext textarea:focus {
-  outline: 1px solid var(--SmartThemeEmColor, #c9a86a); }
-#dg-ext .dg-btn { cursor: pointer; border-radius: 8px; padding: 6px 12px; font-size: 13px;
-  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.2));
-  background: var(--black30, rgba(0,0,0,.25)); color: var(--SmartThemeBodyColor, #ddd); }
-#dg-ext .dg-btn:hover { border-color: var(--SmartThemeEmColor, #c9a86a); }
-#dg-ext .dg-btn-primary { width: 100%; padding: 9px 12px; font-weight: 600; font-size: 14px;
-  border: none; background: var(--SmartThemeEmColor, #c9a86a); color: var(--black300, #16161a); }
-#dg-ext .dg-btn-primary:hover { filter: brightness(1.1); }
-#dg-ext .dg-genrow { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+#dg-ext .dg-autoline { display: flex; align-items: center; gap: 8px;
+  color: var(--SmartThemeEmColor, #c9a86a); }
+#dg-ext .dg-genrow { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
 #dg-ext .dg-genrow input[type=number] { width: 76px; }
 #dg-ext .dg-srcgrid { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; }
 #dg-ext .dg-srcgrid label { opacity: .75; }
-#dg-ext .dg-autoline { display: flex; align-items: center; gap: 8px;
-  color: var(--SmartThemeEmColor, #c9a86a); }
 #dg-ext details { margin-top: 4px; }
 #dg-ext summary { cursor: pointer; font-weight: 600; font-size: 12.5px; opacity: .85;
   padding: 3px 0; list-style-position: inside; }
@@ -61,7 +49,7 @@ const CSS = `
 #dg-ext .dg-status.orphan { color: #ffb86b; opacity: 1; }
 #dg-ext .dg-status.fuzzy { color: #9ad1ff; opacity: 1; }
 #dg-ext .dg-status.stale { color: #ff8b8b; opacity: 1; }
-#dg-ext .dg-row .dg-btn { padding: 2px 8px; }
+#dg-ext .dg-row .menu_button { padding: 2px 8px; }
 #dg-ext .dg-switch { position: relative; width: 34px; height: 19px; flex: none; cursor: pointer; }
 #dg-ext .dg-switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 #dg-ext .dg-switch i { position: absolute; inset: 0; border-radius: 19px; transition: background .15s;
@@ -71,27 +59,31 @@ const CSS = `
   border-radius: 50%; background: var(--SmartThemeBodyColor, #ddd); transition: left .15s; }
 #dg-ext .dg-switch input:checked + i { background: var(--SmartThemeEmColor, #c9a86a); }
 #dg-ext .dg-switch input:checked + i::after { left: 17px; background: var(--black300, #16161a); }
-#dg-ext .dg-switch input:focus-visible + i { outline: 2px solid var(--SmartThemeEmColor, #c9a86a); }
 #dg-ext .dg-empty { opacity: .6; font-style: italic; }
-.dg-shell { margin: 10px 0; position: relative; }
-.dg-frame { width: 100%; border: 0; display: block; min-height: 80px; border-radius: 10px; }
+
+/* Артефакты в посте: по центру, без швов и скроллбаров */
+.dg-shell { margin: 10px 0; position: relative; display: flex; justify-content: center; }
+.dg-shell > iframe, .dg-shell > .dg-chiprow { width: 100%; }
+.dg-frame { border: 0; display: block; min-height: 80px; background: transparent;
+  color-scheme: normal; }
 .dg-chiprow { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .dg-chip, .dg-chip-action { cursor: pointer; border-radius: 8px; padding: 6px 14px; font-size: 13px;
   border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.2));
   background: var(--black30, rgba(0,0,0,.25)); color: var(--SmartThemeBodyColor, #ddd); }
 .dg-chip { font-weight: 600; }
 .dg-chip:hover, .dg-chip-action:hover { border-color: var(--SmartThemeEmColor, #c9a86a); }
-.dg-popup { position: fixed; inset: 0; z-index: 2999; }
-.dg-popup-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.6); }
-.dg-popup-dialog { position: relative; margin: 5vh auto; width: min(780px, 94vw); height: 84vh;
-  background: var(--SmartThemeBlurTintColor, #1e1e22); border-radius: 12px; overflow: hidden;
-  display: flex; flex-direction: column;
-  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.15)); }
-.dg-popup-dialog header { display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 14px; border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.12)); }
-.dg-popup-dialog iframe { flex: 1; width: 100%; border: 0; }
-.dg-popup-close { cursor: pointer; background: none; border: none; font-size: 18px;
-  color: var(--SmartThemeBodyColor, #ddd); }
+
+/* Лайтбокс: иммерсивный — только затемнение и сам артефакт */
+.dg-popup { position: fixed; inset: 0; z-index: 2999; display: flex; align-items: center;
+  justify-content: center; }
+.dg-popup-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
+.dg-popup-dialog { position: relative; width: min(820px, 94vw); height: min(86vh, 900px);
+  display: flex; align-items: center; justify-content: center; }
+.dg-popup-dialog iframe { width: 100%; height: 100%; border: 0; background: transparent; }
+.dg-popup-close { position: absolute; top: 10px; right: 14px; z-index: 2; cursor: pointer;
+  background: rgba(0,0,0,.55); color: #fff; border: 1px solid rgba(255,255,255,.3);
+  border-radius: 50%; width: 34px; height: 34px; font-size: 16px; }
+
 /* Фотослоты (мост URIS): состояния живут на элементе с data-dg-img внутри артефакта */
 [data-dg-img-state="loading"]::after { content: ''; position: absolute; inset: 0; z-index: 2;
   background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.16) 50%, transparent 70%);
@@ -103,6 +95,23 @@ const CSS = `
   text-align: center; cursor: pointer; opacity: 0; transition: opacity .15s;
   border: 1px solid rgba(255,255,255,.3); user-select: none; }
 [data-dg-img]:hover .dg-slot-regen { opacity: 1; }
+
+/* Кнопки генерации: анимация занятости (пост/QR-бар/FAB) */
+.dg-gen-btn.dg-busy i, .dg-launcher-btn.dg-busy i { animation: dgSpin 1s linear infinite; }
+.dg-launcher-btn.dg-busy { color: var(--SmartThemeEmColor, #c9a86a); }
+.dg-launcher-btn.dg-busy::after { content: ''; position: absolute; inset: 2px; border-radius: 50%;
+  border: 2px solid var(--SmartThemeEmColor, #c9a86a); border-top-color: transparent;
+  animation: dgSpin 0.9s linear infinite; }
+@keyframes dgSpin { to { transform: rotate(360deg); } }
+
+/* Лаунчер: QR-бар — как родная кнопка бара; плавающая — фиксированный угол */
+.dg-launcher-btn { position: relative; cursor: pointer; }
+#dg-launcher-fab { position: fixed; right: 20px; bottom: 84px; z-index: 2999; width: 38px; height: 38px;
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--SmartThemeBlurTintColor, #1e1e22); color: var(--SmartThemeEmColor, #c9a86a);
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.2));
+  box-shadow: 0 6px 18px rgba(0,0,0,.4); opacity: .85; }
+#dg-launcher-fab:hover { opacity: 1; }
 `;
 
 // type/status приходят из вывода модели, name/id — из настроек, исключения пишет
@@ -111,6 +120,7 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&a
 
 const SOURCE_LABELS = { current: 'Текущий API SillyTavern', profile: 'Профиль подключения (Connection Manager)', custom: 'Свой endpoint (OpenAI-совместимый)' };
 const DISPLAY_LABELS = { inline: 'Сразу в посте', expand: 'Кнопка → развернуть в посте', popup: 'Кнопка → во всплывающем окне' };
+const BUTTON_LABELS = { post: 'У каждого поста', bar: 'В квик-баре', floating: 'Плавающая' };
 
 /** Чистая: подпись источника профиля для подсказки под селектом шаблона. */
 export function describeSource(p) {
@@ -120,17 +130,85 @@ export function describeSource(p) {
     return 'Источник: текущий API SillyTavern';
 }
 
+// ── Лаунчер кнопки генерации (режим buttonMode) ──
+
+let _launcherObserver = null;
+let _onLauncherClick = null;
+
+function getQuickReplyBar() {
+    return document.querySelector('#send_form #qr--bar')
+        || document.getElementById('qr--bar')
+        || document.querySelector('#send_form .qr--bar');
+}
+function getLauncherHost() {
+    const qrBar = getQuickReplyBar();
+    return qrBar ? (qrBar.querySelector('.qr--buttons') || qrBar) : null;
+}
+
+function ensureLauncher(mode, onClick) {
+    const barBtn = document.getElementById('dg-launcher-bar');
+    const fab = document.getElementById('dg-launcher-fab');
+    if (mode !== 'bar' && mode !== 'floating') {
+        barBtn?.remove();
+        fab?.remove();
+        if (_launcherObserver) { try { _launcherObserver.disconnect(); } catch { /* ок */ } _launcherObserver = null; }
+        return;
+    }
+    _onLauncherClick = onClick;
+    const makeBtn = (id, cls) => {
+        const b = document.createElement('div');
+        b.id = id;
+        b.className = cls;
+        b.title = 'Diegetic: сгенерировать артефакт для последнего поста';
+        b.innerHTML = '<i class="fa-solid fa-scroll"></i>';
+        b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _onLauncherClick?.(); });
+        return b;
+    };
+    if (mode === 'bar') {
+        fab?.remove();
+        const host = getLauncherHost();
+        if (!host) { barBtn?.remove(); return; }
+        const btn = document.getElementById('dg-launcher-bar') || makeBtn('dg-launcher-bar', 'qr--button menu_button interactable dg-launcher-btn');
+        if (btn.parentElement !== host) host.appendChild(btn);
+        // ST пересобирает #send_form при смене чата — перецепляем.
+        if (!_launcherObserver) {
+            const target = document.getElementById('send_form') || document.documentElement;
+            _launcherObserver = new MutationObserver(() => {
+                const h = getLauncherHost();
+                const b = document.getElementById('dg-launcher-bar');
+                if (h && b && b.parentElement !== h) h.appendChild(b);
+            });
+            _launcherObserver.observe(target, { childList: true, subtree: true });
+        }
+    } else {
+        barBtn?.remove();
+        if (!fab) document.body.appendChild(makeBtn('dg-launcher-fab', 'dg-launcher-btn interactable'));
+    }
+}
+
+// ── Панель настроек ──
+
 export function mountPanel(deps) {
     const $ = deps.$;
     const doc = document;
 
-    // Idempotent-remount: повторный init не плодит дубли.
-    for (const id of ['dg-style', 'dg-ext']) {
+    // Idempotent-remount + зачистка DOM старого runner-скрипта (он рисует
+    // панель/FAB с теми же id и дублирует настройки). ВАЖНО: наш <style> —
+    // под отдельным id (dg-style-native): старый скрипт монтируется позже и
+    // подменяет #dg-style своим CSS, убивая стили drawer и попапа.
+    for (const id of ['dg-style-native', 'dg-ext', 'dg-panel', 'dg-fab', 'dg-qr-btn']) {
         doc.getElementById(id)?.remove();
+    }
+    // Живой старый скрипт Diegetic ещё в раннере? — предупредить один раз.
+    if (!mountPanel._legacyWarned && doc.querySelector('iframe[id^="TH-script--Diegetic"]')) {
+        mountPanel._legacyWarned = true;
+        doc.defaultView?.toastr?.warning?.(
+            'В библиотеке скриптов 酒馆助手 всё ещё включён старый скрипт «Diegetic» — он дублирует настройки и генерацию. Отключите или удалите его там.',
+            'Diegetic', { timeOut: 12000 });
     }
 
     const style = doc.createElement('style');
-    style.id = 'dg-style';
+    style.id = 'dg-style-native';
     style.textContent = CSS;
     doc.head.appendChild(style);
 
@@ -155,6 +233,8 @@ export function mountPanel(deps) {
         .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${SOURCE_LABELS[s]}</option>`).join('');
     const displayOpts = (sel) => ['inline', 'expand', 'popup']
         .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${DISPLAY_LABELS[s]}</option>`).join('');
+    const buttonOpts = (sel) => ['post', 'bar', 'floating']
+        .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${BUTTON_LABELS[s]}</option>`).join('');
 
     const render = () => {
         // Шаблон — async (fetch встроенного файла основы профиля).
@@ -167,8 +247,8 @@ export function mountPanel(deps) {
             <span class="dg-type">${esc(r.type)}</span>
             <span class="dg-hint">#${r.msgId}</span>
             <span class="dg-status ${esc(r.status)}">${esc(r.status)}</span>
-            <button class="dg-btn dg-regen" data-msgid="${r.msgId}" title="Перегенерировать">⟳</button>
-            <button class="dg-btn dg-del" data-msgid="${r.msgId}" title="Удалить артефакты поста">✕</button>
+            <button class="menu_button dg-regen" data-msgid="${r.msgId}" title="Перегенерировать">⟳</button>
+            <button class="menu_button dg-del" data-msgid="${r.msgId}" title="Удалить артефакты поста">✕</button>
           </div>`).join('');
             const st = deps.settings();
             const profiles = st.profiles
@@ -188,21 +268,23 @@ export function mountPanel(deps) {
             </div>
             <div class="dg-srcgrid" style="margin-top:8px">
               <label for="dg-display-mode">Показ</label>
-              <select id="dg-display-mode">${displayOpts(st.displayMode)}</select>
+              <select id="dg-display-mode" class="text_pole">${displayOpts(st.displayMode)}</select>
+              <label for="dg-button-mode">Кнопка</label>
+              <select id="dg-button-mode" class="text_pole">${buttonOpts(st.buttonMode)}</select>
             </div>
-            <p class="dg-hint">Кнопка-режимы показывают в посте компактный ряд вместо артефакта:
-              тип открывает его — в посте или во всплывающем окне.</p>
+            <p class="dg-hint">Показ: артефакт сразу в посте или чип-рядом, который открывает его
+              в посте либо во всплывающем окне. Кнопка: где живёт запуск генерации.</p>
           </div>
           <div class="dg-section">
             <p class="dg-title">Шаблон артефактов</p>
-            <select id="dg-profile">${profiles}</select>
+            <select id="dg-profile" class="text_pole">${profiles}</select>
             <p class="dg-hint">${esc(describeSource(active))}</p>
             <div style="margin-top:8px">
-              <button class="dg-btn dg-btn-primary" id="dg-gen-latest">Сгенерировать для последнего поста</button>
+              <button class="menu_button dg-btn-primary" id="dg-gen-latest">Сгенерировать для последнего поста</button>
             </div>
             <div class="dg-genrow">
-              <input id="dg-msgid" type="number" placeholder="ID"/>
-              <button class="dg-btn" id="dg-manual">Сгенерировать по ID</button>
+              <input id="dg-msgid" type="number" class="text_pole" placeholder="ID"/>
+              <button class="menu_button" id="dg-manual">Сгенерировать по ID</button>
             </div>
           </div>
           <div class="dg-section">
@@ -211,17 +293,33 @@ export function mountPanel(deps) {
           </div>
           <div class="dg-section">
             <details>
+              <summary>Контекст генерации</summary>
+              <div class="dg-srcgrid" style="margin-top:4px">
+                <label for="dg-ctx-persona">Персона</label>
+                <input type="checkbox" id="dg-ctx-persona" class="checkbox" ${st.ctxPersona ? 'checked' : ''}/>
+                <label for="dg-ctx-character">Персонаж</label>
+                <input type="checkbox" id="dg-ctx-character" class="checkbox" ${st.ctxCharacter ? 'checked' : ''}/>
+                <label for="dg-ctx-world">Лорбуки</label>
+                <input type="checkbox" id="dg-ctx-world" class="checkbox" ${st.ctxWorld ? 'checked' : ''}/>
+              </div>
+              <p class="dg-hint">Канон для артефактов: персона {{user}}, карточка персонажа и
+                активированные записи World Info (dry-run, на правила самой таверны). Глубина
+                истории чата — ${st.contextDepth} сообщений.</p>
+            </details>
+          </div>
+          <div class="dg-section">
+            <details>
               <summary>Фото через URIS</summary>
               <p class="dg-hint" id="dg-uris-status">проверка моста…</p>
               <div class="dg-srcgrid" style="margin-top:6px">
                 <label for="dg-img-mode">Режим</label>
-                <select id="dg-img-mode">
+                <select id="dg-img-mode" class="text_pole">
                   <option value="off" ${st.imageMode === 'off' ? 'selected' : ''}>выключено</option>
                   <option value="button" ${st.imageMode === 'button' ? 'selected' : ''}>по кнопке 📷 на посте</option>
                   <option value="auto" ${st.imageMode === 'auto' ? 'selected' : ''}>авто (платно, за каждый слот)</option>
                 </select>
                 <label for="dg-img-quality">Качество</label>
-                <select id="dg-img-quality">
+                <select id="dg-img-quality" class="text_pole">
                   <option value="low" ${st.imageQuality === 'low' ? 'selected' : ''}>low</option>
                   <option value="medium" ${st.imageQuality === 'medium' ? 'selected' : ''}>medium</option>
                   <option value="high" ${st.imageQuality === 'high' ? 'selected' : ''}>high</option>
@@ -236,69 +334,70 @@ export function mountPanel(deps) {
               <summary>Текст шаблона</summary>
               <div class="dg-srcgrid" style="margin-bottom:6px">
                 <label for="dg-builtin">Основа</label>
-                <select id="dg-builtin">
+                <select id="dg-builtin" class="text_pole">
                   <option value="universal" ${active?.builtin !== 'universal-photo' ? 'selected' : ''}>Универсальный</option>
                   <option value="universal-photo" ${active?.builtin === 'universal-photo' ? 'selected' : ''}>Универсальный с фото</option>
                 </select>
               </div>
-              <textarea id="dg-template" rows="9">${esc(template)}</textarea>
+              <textarea id="dg-template" class="text_pole" rows="9">${esc(template)}</textarea>
               <p class="dg-hint">пустое поле = выбранная встроенная основа</p>
               <div class="dg-genrow">
-                <button class="dg-btn" id="dg-save-template">Сохранить шаблон</button>
-                <button class="dg-btn" id="dg-reset-template" title="Вернуть встроенный универсальный шаблон">Вернуть встроенный</button>
+                <button class="menu_button" id="dg-save-template">Сохранить шаблон</button>
+                <button class="menu_button" id="dg-reset-template" title="Вернуть встроенный шаблон основы">Вернуть встроенный</button>
               </div>
             </details>
           </div>
           <div class="dg-section">
             <details>
               <summary>Источник генерации</summary>
-              <select id="dg-source">${sourceOpts(src)}</select>
+              <select id="dg-source" class="text_pole">${sourceOpts(src)}</select>
               <div id="dg-src-profile" style="display:${src === 'profile' ? '' : 'none'}; margin-top:6px">
                 ${cmOptions
-                  ? `<select id="dg-cm-profile">${cmOptions}</select>`
+                  ? `<select id="dg-cm-profile" class="text_pole">${cmOptions}</select>`
                   : '<p class="dg-hint">Расширение connection-manager не найдено или в нём нет профилей.</p>'}
               </div>
               <div id="dg-src-custom" style="display:${src === 'custom' ? '' : 'none'}; margin-top:6px">
                 <div class="dg-srcgrid">
-                  <label for="dg-apiurl">URL</label><input id="dg-apiurl" type="text" value="${esc(sc.apiurl || '')}" placeholder="https://…/v1"/>
-                  <label for="dg-key">Ключ</label><input id="dg-key" type="password" value="" placeholder="${sc.hasKey ? 'сохранён — введи для замены' : 'sk-…'}"/>
-                  <label for="dg-model">Модель</label><input id="dg-model" type="text" value="${esc(sc.model || '')}" placeholder="необязательно"/>
+                  <label for="dg-apiurl">URL</label><input id="dg-apiurl" type="text" class="text_pole" value="${esc(sc.apiurl || '')}" placeholder="https://…/v1"/>
+                  <label for="dg-key">Ключ</label><input id="dg-key" type="password" class="text_pole" value="" placeholder="${sc.hasKey ? 'сохранён — введи для замены' : 'sk-…'}"/>
+                  <label for="dg-model">Модель</label><input id="dg-model" type="text" class="text_pole" value="${esc(sc.model || '')}" placeholder="необязательно"/>
                 </div>
               </div>
-              <div class="dg-genrow"><button class="dg-btn" id="dg-save-source">Применить к профилю</button></div>
+              <div class="dg-genrow"><button class="menu_button" id="dg-save-source">Применить к профилю</button></div>
               <p class="dg-hint">Ключ хранится в localforage браузера, а не в settings.json.</p>
             </details>
           </div>
           <div class="dg-section">
             <details>
               <summary>Новый шаблон (профиль)</summary>
-              <input id="dg-newname" type="text" placeholder="имя профиля" style="margin-bottom:6px"/>
-              <select id="dg-newsource">${sourceOpts('current')}</select>
+              <input id="dg-newname" type="text" class="text_pole" placeholder="имя профиля" style="margin-bottom:6px"/>
+              <select id="dg-newsource" class="text_pole">${sourceOpts('current')}</select>
               <div id="dg-new-cm" style="display:none; margin-top:6px">
                 ${cmOptions
-                  ? `<select id="dg-new-cm-profile">${cmOptions}</select>`
+                  ? `<select id="dg-new-cm-profile" class="text_pole">${cmOptions}</select>`
                   : '<p class="dg-hint">Connection Manager недоступен — выбери другой источник.</p>'}
               </div>
               <div id="dg-new-custom" style="display:none; margin-top:6px">
                 <div class="dg-srcgrid">
-                  <label for="dg-apiurl">URL</label><input id="dg-napiurl" type="text" placeholder="https://…/v1"/>
-                  <label for="dg-nkey">Ключ</label><input id="dg-nkey" type="password" placeholder="sk-…"/>
-                  <label for="dg-nmodel">Модель</label><input id="dg-nmodel" type="text" placeholder="необязательно"/>
+                  <label for="dg-apiurl">URL</label><input id="dg-napiurl" type="text" class="text_pole" placeholder="https://…/v1"/>
+                  <label for="dg-nkey">Ключ</label><input id="dg-nkey" type="password" class="text_pole" placeholder="sk-…"/>
+                  <label for="dg-nmodel">Модель</label><input id="dg-nmodel" type="text" class="text_pole" placeholder="необязательно"/>
                 </div>
               </div>
-              <div class="dg-genrow"><button class="dg-btn" id="dg-add-profile">Добавить профиль</button></div>
+              <div class="dg-genrow"><button class="menu_button" id="dg-add-profile">Добавить профиль</button></div>
               <p class="dg-hint">Новый профиль получает встроенный универсальный шаблон — правится в «Текст шаблона».</p>
             </details>
           </div>
           <div class="dg-section">
             <details>
               <summary>Исключения авторежима</summary>
-              <textarea id="dg-excl" rows="3">${esc(deps.getExclusions())}</textarea>
+              <textarea id="dg-excl" class="text_pole" rows="3">${esc(deps.getExclusions())}</textarea>
               <p class="dg-hint">фраза на строку — на постах с такой фразой авторежим молчит</p>
-              <div class="dg-genrow"><button class="dg-btn" id="dg-save-excl">Сохранить исключения</button></div>
+              <div class="dg-genrow"><button class="menu_button" id="dg-save-excl">Сохранить исключения</button></div>
             </details>
           </div>`);
             refreshUrisStatus();
+            ensureLauncher(deps.settings().buttonMode, deps.runLatest);
         }).catch(() => { /* шаблон не загрузился — перерисуем при следующем вызове */ });
     };
 
@@ -316,26 +415,25 @@ export function mountPanel(deps) {
         }).catch(() => {});
     };
 
-    // Делегированные обработчики — ОДИН раз, namespace .diegetic.
+    // Делегированные обработчики — scoped к нашему drawer: панель старого
+    // runner-скрипта использует те же id, наши хендлеры на неё не должны влиять.
     $(doc).off('.diegetic');
-    $(doc).on('change.diegetic', '#dg-enabled', (e) => {
+    $(doc).on('change.diegetic', '#dg-ext #dg-enabled', (e) => {
         deps.setEnabled(e.target.checked);
         $('#dg-auto-label').text(e.target.checked ? 'автогенерация после каждого поста' : 'автогенерация выключена');
     });
-    $(doc).on('change.diegetic', '#dg-display-mode', (e) => { deps.setDisplayMode(String(e.target.value)); });
-    $(doc).on('change.diegetic', '#dg-profile', (e) => { deps.setActiveProfile(e.target.value); render(); });
-    $(doc).on('click.diegetic', '#dg-gen-latest', () => {
-        const id = deps.getLatestAssistantId ? deps.getLatestAssistantId() : null;
-        if (id !== null) deps.pipeline.run(id, { force: true });
-    });
-    $(doc).on('click.diegetic', '#dg-manual', () => {
+    $(doc).on('change.diegetic', '#dg-ext #dg-display-mode', (e) => { deps.setDisplayMode(String(e.target.value)); });
+    $(doc).on('change.diegetic', '#dg-ext #dg-button-mode', (e) => { deps.setButtonMode(String(e.target.value)); });
+    $(doc).on('change.diegetic', '#dg-ext #dg-profile', (e) => { deps.setActiveProfile(e.target.value); render(); });
+    $(doc).on('click.diegetic', '#dg-ext #dg-gen-latest', () => { deps.runLatest?.(); });
+    $(doc).on('click.diegetic', '#dg-ext #dg-manual', () => {
         const id = Number($('#dg-msgid').val());
-        if (Number.isFinite(id)) deps.pipeline.run(id, { force: true });
+        if (Number.isFinite(id)) deps.runId?.(id);
     });
-    $(doc).on('click.diegetic', '#dg-save-template', () => { deps.setTemplateText(String($('#dg-template').val())); });
-    $(doc).on('change.diegetic', '#dg-builtin', (e) => { deps.setBuiltin(String(e.target.value)); render(); });
-    $(doc).on('click.diegetic', '#dg-reset-template', () => { deps.setTemplateText(''); render(); });
-    $(doc).on('click.diegetic', '#dg-save-source', () => {
+    $(doc).on('click.diegetic', '#dg-ext #dg-save-template', () => { deps.setTemplateText(String($('#dg-template').val())); });
+    $(doc).on('change.diegetic', '#dg-ext #dg-builtin', (e) => { deps.setBuiltin(String(e.target.value)); render(); });
+    $(doc).on('click.diegetic', '#dg-ext #dg-reset-template', () => { deps.setTemplateText(''); render(); });
+    $(doc).on('click.diegetic', '#dg-ext #dg-save-source', () => {
         deps.setProfileSource({
             source: String($('#dg-source').val()),
             apiurl: String($('#dg-apiurl').val() || ''),
@@ -346,17 +444,17 @@ export function mountPanel(deps) {
         });
         render();
     });
-    $(doc).on('change.diegetic', '#dg-source', (e) => {
+    $(doc).on('change.diegetic', '#dg-ext #dg-source', (e) => {
         const v = String($(e.target).val());
         $('#dg-src-profile').toggle(v === 'profile');
         $('#dg-src-custom').toggle(v === 'custom');
     });
-    $(doc).on('change.diegetic', '#dg-newsource', (e) => {
+    $(doc).on('change.diegetic', '#dg-ext #dg-newsource', (e) => {
         const v = String($(e.target).val());
         $('#dg-new-cm').toggle(v === 'profile');
         $('#dg-new-custom').toggle(v === 'custom');
     });
-    $(doc).on('click.diegetic', '#dg-add-profile', () => {
+    $(doc).on('click.diegetic', '#dg-ext #dg-add-profile', () => {
         const name = String($('#dg-newname').val() || '').trim();
         if (!name) return;
         const source = String($('#dg-newsource').val());
@@ -375,12 +473,16 @@ export function mountPanel(deps) {
         $('#dg-newsource').val('current');
         render();
     });
-    $(doc).on('click.diegetic', '#dg-regen', (e) => deps.regen(Number($(e.target).data('msgid'))));
-    $(doc).on('click.diegetic', '#dg-del', (e) => deps.removeArtifacts(Number($(e.target).data('msgid'))));
-    $(doc).on('click.diegetic', '#dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
-    $(doc).on('change.diegetic', '#dg-img-mode', (e) => deps.setImageMode?.(String(e.target.value)));
-    $(doc).on('change.diegetic', '#dg-img-quality', (e) => deps.setImageQuality?.(String(e.target.value)));
+    $(doc).on('click.diegetic', '#dg-ext #dg-regen', (e) => deps.regen(Number($(e.target).data('msgid'))));
+    $(doc).on('click.diegetic', '#dg-ext #dg-del', (e) => deps.removeArtifacts(Number($(e.target).data('msgid'))));
+    $(doc).on('click.diegetic', '#dg-ext #dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
+    $(doc).on('change.diegetic', '#dg-ext #dg-img-mode', (e) => deps.setImageMode?.(String(e.target.value)));
+    $(doc).on('change.diegetic', '#dg-ext #dg-img-quality', (e) => deps.setImageQuality?.(String(e.target.value)));
+    $(doc).on('change.diegetic', '#dg-ext #dg-ctx-persona', (e) => deps.setCtxPersona?.(e.target.checked));
+    $(doc).on('change.diegetic', '#dg-ext #dg-ctx-character', (e) => deps.setCtxCharacter?.(e.target.checked));
+    $(doc).on('change.diegetic', '#dg-ext #dg-ctx-world', (e) => deps.setCtxWorld?.(e.target.checked));
 
+    ensureLauncher(deps.settings().buttonMode, deps.runLatest);
     render();
     return { render };
 }
@@ -389,7 +491,8 @@ export function mountPanel(deps) {
 export function unmountUi(deps) {
     const $ = deps?.$ ?? globalThis.jQuery ?? globalThis.$;
     try { $?.(document).off('.diegetic'); } catch { /* ок */ }
-    for (const id of ['dg-style', 'dg-ext']) {
+    if (_launcherObserver) { try { _launcherObserver.disconnect(); } catch { /* ок */ } _launcherObserver = null; }
+    for (const id of ['dg-style-native', 'dg-ext', 'dg-launcher-bar', 'dg-launcher-fab']) {
         document.getElementById(id)?.remove();
     }
 }

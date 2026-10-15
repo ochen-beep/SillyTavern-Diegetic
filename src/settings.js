@@ -8,6 +8,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
     imageMode: 'button',       // 'off' | 'button' | 'auto' — фотослоты через мост URIS
     imageQuality: 'medium',    // 'low' | 'medium' | 'high' — quality для URIS generate()
     displayMode: 'inline',     // 'inline' | 'expand' | 'popup' — как артефакт показан в посте
+    buttonMode: 'post',        // 'post' | 'bar' | 'floating' — где кнопка генерации
+    ctxPersona: true,          // персона {{user}} в контексте генерации
+    ctxCharacter: true,        // описание персонажа в контексте
+    ctxWorld: true,            // активированные лорбуки (dry-run скан ST) в контексте
     activeProfile: 'default',
     profiles: [
         { id: 'default', name: 'Универсальный', source: 'current', sourceConfig: null, templateText: '', builtin: 'universal' },
@@ -20,6 +24,7 @@ const IMAGE_MODES = new Set(['off', 'button', 'auto']);
 const IMAGE_QUALITIES = new Set(['low', 'medium', 'high']);
 const DISPLAY_MODES = new Set(['inline', 'expand', 'popup']);
 const BUILTINS = new Set(['universal', 'universal-photo']);
+const BUTTON_MODES = new Set(['post', 'bar', 'floating']);
 // «Мусор — дефолты»: нечисловое или выходящее за [lo, hi] значение даёт дефолт, а не границу диапазона.
 const bounded = (v, lo, hi, dflt) => {
     const n = Math.round(Number(v));
@@ -62,6 +67,10 @@ export function normalizeSettings(input) {
         imageMode: IMAGE_MODES.has(raw.imageMode) ? raw.imageMode : DEFAULT_SETTINGS.imageMode,
         imageQuality: IMAGE_QUALITIES.has(raw.imageQuality) ? raw.imageQuality : DEFAULT_SETTINGS.imageQuality,
         displayMode: DISPLAY_MODES.has(raw.displayMode) ? raw.displayMode : DEFAULT_SETTINGS.displayMode,
+        buttonMode: BUTTON_MODES.has(raw.buttonMode) ? raw.buttonMode : DEFAULT_SETTINGS.buttonMode,
+        ctxPersona: raw.ctxPersona === false ? false : true,
+        ctxCharacter: raw.ctxCharacter === false ? false : true,
+        ctxWorld: raw.ctxWorld === false ? false : true,
         profiles,
         activeProfile,
     };

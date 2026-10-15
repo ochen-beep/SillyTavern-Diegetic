@@ -15,10 +15,11 @@ import { createPipeline, isExcluded } from './src/pipeline.js';
 import { createGenerationCoordinator } from './src/coordinator.js';
 import { createInitializationController } from './src/lifecycle.js';
 import { mountPanel, unmountUi, collectRows } from './src/ui.js';
-import { initRender, shutdownRender, reconcile, reconcileMessage } from './src/render.js';
+import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating } from './src/render.js';
 import { migrateCurrentChat } from './src/migrate.js';
 import { clearPayload, variantText, PAYLOAD_KEY } from './src/payload.js';
 import { urisStatus } from './src/images.js';
+import { collectContext } from './src/context.js';
 
 const log = (...a) => console.log('[Diegetic]', ...a);
 const warn = (...a) => console.warn('[Diegetic]', ...a);
@@ -44,19 +45,43 @@ async function migrateApiKeys() {
     save();
 }
 
-function getContextBlock(messageId, depth) {
+async function getContextBlock(messageId, depth) {
+    const ctx = getCtx();
+    const chat = getChat();
     const from = Math.max(0, Number(messageId) - depth);
     const to = Number(messageId) - 1;
-    if (to < from) return '';
-    const chat = getChat();
-    const parts = [];
+    const lines = [];
     for (let i = from; i <= to; i++) {
         const m = chat[i];
         if (!m) continue;
         // Проза — это и есть весь текст: артефакты в тексте не живут (extra).
-        parts.push(`${m.is_user ? (m.name || 'Пользователь') : 'ИИ'}: ${String(m.mes ?? '').slice(0, 400)}`);
+        lines.push(`${m.is_user ? (m.name || ctx?.name1 || 'Пользователь') : (m.name || ctx?.name2 || 'ИИ')}: ${String(m.mes ?? '').slice(0, 400)}`);
     }
-    return parts.join('\n---\n');
+    return collectContext(ctx, {
+        persona: settings.ctxPersona,
+        character: settings.ctxCharacter,
+        world: settings.ctxWorld,
+        earlierBlock: lines.join('\n'),
+    });
+}
+
+// Обёртка запуска генерации: busy-индикатор на всех кнопках (пост/QR/FAB).
+let _generating = 0;
+function runBusy(id, opts = {}) {
+    _generating++;
+    setGenerating(true);
+    return pipeline.run(id, opts).finally(() => {
+        _generating--;
+        if (_generating <= 0) setGenerating(false);
+    });
+}
+
+function getLatestAssistantId() {
+    const chat = getChat();
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (chat[i] && !chat[i].is_user && !chat[i].is_system) return i;
+    }
+    return null;
 }
 
 async function init(isCancelled = () => false) {
@@ -139,16 +164,14 @@ async function init(isCancelled = () => false) {
         },
         getBuiltinTemplate,
         listCmProfiles,
-        getLatestAssistantId: () => {
-            const chat = getChat();
-            for (let i = chat.length - 1; i >= 0; i--) {
-                if (chat[i] && !chat[i].is_user && !chat[i].is_system) return i;
-            }
-            return null;
+        // Лаунчер и панельные кнопки идут через runBusy — busy-анимация на всех.
+        runLatest: () => {
+            const id = getLatestAssistantId();
+            if (id !== null) runBusy(id, { force: true });
         },
-        pipeline,
+        runId: (id) => { if (Number.isFinite(id)) runBusy(id, { force: true }); },
         listArtifacts: () => collectRows(getChat()),
-        regen: (msgId) => pipeline.run(msgId, { force: true }),
+        regen: (msgId) => runBusy(msgId, { force: true }),
         removeArtifacts: (msgId) => {
             const msg = getMessage(msgId);
             if (msg && clearPayload(msg, msg.swipe_id ?? 0)) {
@@ -164,6 +187,15 @@ async function init(isCancelled = () => false) {
         setImageMode: (v) => { settings.imageMode = v; save(); },
         setImageQuality: (v) => { settings.imageQuality = v; save(); },
         setDisplayMode: (v) => { settings.displayMode = v; save(); reconcile(); },
+        setButtonMode: (v) => {
+            settings.buttonMode = v;
+            save();
+            reconcile(); // пересмотр кнопок в постах
+            panelApi?.render(); // лаунчер перерисовывает ui.js по готовности
+        },
+        setCtxPersona: (v) => { settings.ctxPersona = v; save(); },
+        setCtxCharacter: (v) => { settings.ctxCharacter = v; save(); },
+        setCtxWorld: (v) => { settings.ctxWorld = v; save(); },
         urisStatus,
     };
 
@@ -174,11 +206,16 @@ async function init(isCancelled = () => false) {
 
     initRender({
         settings: () => settings,
-        run: (id) => pipeline.run(id, { force: true }),
+        run: (id) => runBusy(id, { force: true }),
         fillImageSlots: (id) => pipeline.fillImageSlots(id),
         hasPending: (id) => pipeline.hasPendingPhotoSlots(id),
         regenSlot: (id, artifactId, ordinal, cardId) =>
             pipeline.fillImageSlots(id, { artifactId, onlyOrdinal: ordinal, removeCardId: cardId }),
+    });
+
+    // Настройки редкие, но debounce хоста может не дожить до закрытия вкладки.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') getCtx()?.saveSettingsDebounced?.();
     });
 
     bindEvents(ctx);
@@ -197,7 +234,7 @@ function onMessageReceived(id) {
         const phrases = String(chatData()?.exclusions ?? '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
         if (isExcluded(prose, phrases)) return;
     } catch { /* не смогли прочитать — пусть пайплайн сам разбирается */ }
-    pipeline?.run(Number(id));
+    if (pipeline && settings?.enabled) runBusy(Number(id));
 }
 
 function bindEvents(ctx) {

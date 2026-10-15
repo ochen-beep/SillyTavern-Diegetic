@@ -152,12 +152,18 @@ function buildShell(artifact, key, msgId) {
         copy.className = 'dg-chip-action';
         copy.setAttribute('data-dg-copy', '');
         copy.textContent = '⧉ Copy HTML';
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.className = 'dg-chip-action';
+        save.setAttribute('data-dg-save', '');
+        save.title = 'Сохранить как .html — открыть в браузере и потыкать';
+        save.textContent = '⤓ Файл';
         const del = document.createElement('button');
         del.type = 'button';
         del.className = 'dg-chip-action';
         del.setAttribute('data-dg-del', '');
         del.textContent = '✕ Delete';
-        shell.append(open, copy, del);
+        shell.append(open, copy, save, del);
         return shell;
     }
     shell.className = 'dg-shell';
@@ -200,6 +206,22 @@ async function copyText(text) {
     try { ok = document.execCommand('copy'); } catch { /* совсем старый движок */ }
     ta.remove();
     return ok;
+}
+
+/** Сохранить артефакт как standalone .html (Blob + a[download], без сервера):
+ *  файл открывается двойным кликом в любом браузере — артефакт и есть
+ *  полноценный документ по контракту. */
+function saveArtifactFile(artifact) {
+    const blob = new Blob([String(artifact.html)], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safe = (s) => String(s ?? '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '') || 'artifact';
+    a.download = `diegetic-${safe(artifact.type)}-${safe(artifact.id)}.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 /** Удалить артефакт из payload; пустой payload снимается целиком. */
@@ -408,6 +430,11 @@ function onDocumentClick(e) {
         if (e.target.closest('[data-dg-copy]')) {
             const a = artifactByKey(msgId, key);
             if (a) copyText(a.html).then((ok) => globalThis.toastr?.[ok ? 'success' : 'error'](ok ? 'Diegetic: HTML скопирован' : 'Diegetic: копирование не удалось'));
+            return;
+        }
+        if (e.target.closest('[data-dg-save]')) {
+            const a = artifactByKey(msgId, key);
+            if (a) { saveArtifactFile(a); globalThis.toastr?.success('Diegetic: файл сохранён — открой его в браузере'); }
             return;
         }
         if (e.target.closest('[data-dg-open]')) {

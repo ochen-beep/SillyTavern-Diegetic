@@ -10,6 +10,7 @@
 // ◆ сгенерировать/перегенерировать, 📷 заполнить фотослоты (режим «по кнопке»).
 
 import { getMessage, persistChat } from './host.js';
+import { parseImageSlots, slotCardId, SLOT_ATTR } from './images.js';
 import {
     readVerifiedPayload, readRawPayload, writePayload, clearPayload,
     payloadBelongsToOtherVariant, digestForVariant, variantText,
@@ -29,12 +30,33 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 // allow-same-origin НЕ давать (иначе скрипт артефакта достаёт parent DOM).
 // Высота — postMessage-рукопожатие; html принудительно прозрачный и без
 // скроллбаров (иммерсивная вставка — скролл внутри артефакта не трогаем).
-const IMMERSIVE_CSS = '<style>html{background:transparent!important;overflow:hidden!important}</style>';
+// html/body — нулевой min-height (форма HTML-Inserts normalizeDocument): иначе
+// 100vh-ловушка на body раздувает iframe и после сворачивания артефакта внутри
+// себя высота не сжимается обратно — внизу висит чёрная пустота.
+const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}</style>';
 const RESIZE_SNIPPET = '<script>(function(){var p=function(){try{parent.postMessage({__dgH:document.documentElement.scrollHeight},"*")}catch(e){}};if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}addEventListener("load",p);p()})()</' + 'script>';
+// Клики внутри sandbox-iframe (opaque origin) до родительского document не доходят —
+// команды контролов (✎/⟳) уходят postMessage'ом, по образцу рукопожатия высоты.
+// Capture + stopPropagation: клик по контролу не должен будить JS самого артефакта.
+const CMD_SNIPPET = '<script>document.addEventListener("click",function(e){var t=e.target&&e.target.closest?e.target.closest("[data-dg-cmd]"):null;if(!t)return;e.preventDefault();e.stopPropagation();try{parent.postMessage({__dgCmd:String(t.getAttribute("data-dg-cmd")),ordinal:Number(t.getAttribute("data-ordinal"))},"*")}catch(x){}},true)</' + 'script>';
 const withImmersiveCss = (html) => /<head[^>]*>/i.test(String(html))
     ? String(html).replace(/<head[^>]*>/i, (m) => m + IMMERSIVE_CSS)
     : String(html).replace(/<html[^>]*>/i, (m) => m + '<head>' + IMMERSIVE_CSS + '</head>');
 const clampH = (h) => Math.min(Math.max(40, Math.round(h) || 0), 4000);
+
+/**
+ * Высота артефакта должна быть «естественной» (по контенту): модель любит
+ * min-height:100vh/100svh на body или сцене — внутри iframe vh = высота самого
+ * iframe, поэтому рукопожатие растит его до капа 4000, а при внутреннем
+ * сворачивании артефакта высота не возвращается. Срезаем vh из height-свойств
+ * (анимации вида translateY(100vh) не трогаем).
+ */
+export function normalizeIntrinsicHeight(html) {
+    return String(html ?? '').replace(
+        /\b(min-height|max-height|height)\s*:\s*100(?:s|l|d)?vh\b/gi,
+        (m, prop) => `${prop}:auto`,
+    );
+}
 
 let _observer = null;
 let _debounceId = null;
@@ -58,20 +80,63 @@ const isOpen = (a) => {
 };
 const shellKey = (a) => `${baseKey(a)}|${isOpen(a) ? 'o' : 'c'}`;
 
+// Контролы фотослота (✎ промпт, ⟳ перегенерация) — display-only: payload кнопок
+// не хранит, сохранённый .html остаётся чистым артефактом. Стили лежат здесь же —
+// родительский CSS в sandbox-iframe не проникает (старый блок в ui.js был мёртвым).
+const SLOT_CTL_CSS = '<style>'
+    + '.dg-slot-ctl{position:absolute;top:6px;z-index:30;width:22px;height:22px;border-radius:50%;'
+    + 'background:rgba(0,0,0,.55);color:#fff;font-size:13px;line-height:22px;text-align:center;'
+    + 'cursor:pointer;border:1px solid rgba(255,255,255,.3);user-select:none;font-family:system-ui,sans-serif;'
+    + 'opacity:0;transition:opacity .15s}'
+    + '.dg-slot-regen{right:6px}.dg-slot-edit{right:32px}.dg-slot-cancel{right:6px}'
+    + '[data-dg-img]:hover .dg-slot-ctl{opacity:1}'
+    + '[data-dg-img-state="loading"]::after{content:"";position:absolute;inset:0;z-index:20;'
+    + 'background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.16) 50%,transparent 70%);'
+    + 'background-size:200% 100%;animation:dgShimmer 1.4s linear infinite}'
+    + '@keyframes dgShimmer{from{background-position:200% 0}to{background-position:-200% 0}}'
+    + '[data-dg-img-state="error"]{outline:1px dashed rgba(255,120,120,.55);outline-offset:-1px}'
+    + '</style>';
+// Старые payload'ы несут в себе зашитый ⟳ из slotImgHtml — срезаем перед показом.
+const LEGACY_CTL_RE = /<span class="dg-slot-regen"[^>]*>[^<]*<\/span>/g;
+
+const slotControls = (ordinal, state) =>
+    `<span class="dg-slot-ctl dg-slot-edit" data-dg-cmd="slot-edit" data-ordinal="${ordinal}" title="Промпт фото">✎</span>`
+    // Во время заливки ⟳ превращается в ⏹: клик отменяет генерацию (abortKind
+    // 'fill'), после аборта слот откатится в pending и контролы вернутся к ⟳.
+    + (state === 'loading'
+        ? `<span class="dg-slot-ctl dg-slot-cancel" data-dg-cmd="slot-cancel" data-ordinal="${ordinal}" title="Отменить генерацию фото">⏹</span>`
+        : `<span class="dg-slot-ctl dg-slot-regen" data-dg-cmd="slot-regen" data-ordinal="${ordinal}" title="Перегенерировать фото">⟳</span>`);
+
+/** Дорисовать контролы каждому фотослоту (сразу после открывающего тега слота). */
+export function withSlotControls(html) {
+    let s = String(html ?? '').replace(LEGACY_CTL_RE, '');
+    const slots = parseImageSlots(s);
+    if (!slots.length) return s;
+    for (let i = slots.length - 1; i >= 0; i--) {
+        const sl = slots[i];
+        s = s.slice(0, sl.end) + slotControls(sl.ordinal, sl.state) + s.slice(sl.end);
+    }
+    return /<\/body>/i.test(s)
+        ? s.replace(/<\/body>/i, SLOT_CTL_CSS + '</body>')
+        : s + SLOT_CTL_CSS;
+}
+
 /**
  * Display-патч хранённых артефактов (текст extra не переписываем): старые
  * инжекты фото шли с z-index:1 и без скрытия плейсхолдера — модели кладут декор
  * плейсхолдера на z-index:2+, и он перекрывал фото. Новые инжекты (images.js)
- * пишут z-index:10 + hide-style сразу.
+ * пишут z-index:10 + hide-style сразу. Здесь же срез vh-ловушек высоты и
+ * дорисовка контролов фотослотов.
  */
 function patchStoredArtifact(html) {
-    const s = String(html ?? '');
-    if (!/dg-slot-img/.test(s)) return s;
-    let out = s.replace(/(dg-slot-img[^>]*z-index:\s*)1\s*;/g, '$110;');
-    if (/dg-slot-img/.test(out) && /\.css-placeholder/.test(out) && !out.includes('css-placeholder{display:none')) {
-        out = out.replace(/<\/body>/i, '<style>.css-placeholder{display:none!important}</style></body>');
+    let out = normalizeIntrinsicHeight(String(html ?? ''));
+    if (/dg-slot-img/.test(out)) {
+        out = out.replace(/(dg-slot-img[^>]*z-index:\s*)1\s*;/g, '$110;');
+        if (/\.css-placeholder/.test(out) && !out.includes('css-placeholder{display:none')) {
+            out = out.replace(/<\/body>/i, '<style>.css-placeholder{display:none!important}</style></body>');
+        }
     }
-    return out;
+    return withSlotControls(out);
 }
 
 /** Подставить закэшированные фото (data:) в html оболочки. */
@@ -134,6 +199,38 @@ function locateBlock(blocks, artifact) {
 
 const escAttr = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+/** Строка действий чипа: Collapse виден только у развёрнутого (expand). */
+function buildActionRow({ collapse = false } = {}) {
+    const row = document.createElement('div');
+    row.className = 'dg-chiprow dg-chiprow-attached';
+    if (collapse) {
+        const fold = document.createElement('button');
+        fold.type = 'button';
+        fold.className = 'dg-chip';
+        fold.setAttribute('data-dg-collapse', '');
+        fold.textContent = '▾ Свернуть';
+        row.appendChild(fold);
+    }
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'dg-chip-action';
+    copy.setAttribute('data-dg-copy', '');
+    copy.textContent = '⧉ Copy HTML';
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'dg-chip-action';
+    save.setAttribute('data-dg-save', '');
+    save.title = 'Сохранить как .html — открыть в браузере и потыкать';
+    save.textContent = '⤓ Файл';
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'dg-chip-action';
+    del.setAttribute('data-dg-del', '');
+    del.textContent = '✕ Delete';
+    row.append(copy, save, del);
+    return row;
+}
+
 function buildShell(artifact, key, msgId) {
     const open = isOpen(artifact);
     const shell = document.createElement('div');
@@ -147,23 +244,7 @@ function buildShell(artifact, key, msgId) {
         open.className = 'dg-chip';
         open.setAttribute('data-dg-open', '');
         open.textContent = String(artifact.type || 'artifact');
-        const copy = document.createElement('button');
-        copy.type = 'button';
-        copy.className = 'dg-chip-action';
-        copy.setAttribute('data-dg-copy', '');
-        copy.textContent = '⧉ Copy HTML';
-        const save = document.createElement('button');
-        save.type = 'button';
-        save.className = 'dg-chip-action';
-        save.setAttribute('data-dg-save', '');
-        save.title = 'Сохранить как .html — открыть в браузере и потыкать';
-        save.textContent = '⤓ Файл';
-        const del = document.createElement('button');
-        del.type = 'button';
-        del.className = 'dg-chip-action';
-        del.setAttribute('data-dg-del', '');
-        del.textContent = '✕ Delete';
-        shell.append(open, copy, save, del);
+        shell.append(open, ...buildActionRow().children);
         return shell;
     }
     shell.className = 'dg-shell';
@@ -172,12 +253,18 @@ function buildShell(artifact, key, msgId) {
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.setAttribute('title', String(artifact.type || 'artifact'));
     const html = patchStoredArtifact(artifact.html);
-    frame.srcdoc = withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET;
+    const srcdoc = () => withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET + CMD_SNIPPET;
+    frame.srcdoc = srcdoc();
     shell.appendChild(frame);
     // Догреть кэш фото и перелить в iframe, когда data: готовы.
     warmImages(html).then(() => {
-        if (frame.isConnected) frame.srcdoc = withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET;
+        if (frame.isConnected) frame.srcdoc = srcdoc();
     });
+    // Expand-режим: меню живёт вместе с развёрнутым артефактом — свернуть /
+    // скопировать / сохранить / удалить, а не исчезать после раскрытия.
+    if ((_deps?.settings?.().displayMode ?? 'inline') === 'expand') {
+        shell.appendChild(buildActionRow({ collapse: true }));
+    }
     return shell;
 }
 
@@ -240,11 +327,11 @@ function deleteArtifact(msgId, artifactId) {
 }
 
 function closePopup() {
-    _popup?.remove();
+    _popup?.el.remove();
     _popup = null;
 }
 
-function openPopup(artifact) {
+function openPopup(artifact, msgId = null) {
     closePopup();
     const overlay = document.createElement('div');
     overlay.className = 'dg-popup';
@@ -252,23 +339,105 @@ function openPopup(artifact) {
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
     const html = withImmersiveCss(patchStoredArtifact(String(artifact.html)));
-    frame.srcdoc = withCachedImages(html);
+    const srcdoc = () => withCachedImages(html) + CMD_SNIPPET;
+    frame.srcdoc = srcdoc();
     warmImages(html).then(() => {
-        if (overlay.isConnected) frame.srcdoc = withCachedImages(html);
+        if (overlay.isConnected) frame.srcdoc = srcdoc();
     });
     overlay.querySelector('.dg-popup-dialog').appendChild(frame);
     overlay.addEventListener('click', (e) => { if (e.target.closest('[data-dg-close]')) closePopup(); });
     document.body.appendChild(overlay);
-    _popup = overlay;
+    // Команды из iframe попапа (✎/⟳) маппятся на артефакт через это описание —
+    // у popup-iframe нет shell-предка в посте.
+    _popup = { el: overlay, frame, msgId, artifactId: artifact.id ?? null };
+}
+
+let _editor = null;
+function closeEditor() { _editor?.remove(); _editor = null; }
+
+/** Редактор промпта фотослота: триггер + описание, сохранить или сразу перегенерировать. */
+function openSlotEditor(msgId, artifactId, ordinal) {
+    const msg = getMessage(msgId);
+    const payload = msg ? readRawPayload(msg, msg.swipe_id ?? 0) : null;
+    const art = payload?.artifacts.find(a => a.id === artifactId);
+    const slot = art ? parseImageSlots(art.html).find(s => s.ordinal === ordinal) : null;
+    if (!slot) return;
+    closeEditor();
+    const overlay = document.createElement('div');
+    overlay.className = 'dg-popup dg-slot-editor';
+    overlay.innerHTML = '<div class="dg-popup-backdrop" data-dg-close></div>'
+        + '<section class="dg-popup-dialog dg-editor-dialog" role="dialog" aria-modal="true">'
+        + '<header><strong>Промпт фотослота</strong>'
+        + '<button type="button" class="dg-popup-close" data-dg-close aria-label="Закрыть">×</button></header>'
+        + '<label class="dg-editor-row">Триггер<select data-f="trigger">'
+        + '<option value="">— без триггера —</option>'
+        + '<option value="selfie">selfie — персонаж в кадре, вертикальный кадр</option>'
+        + '<option value="img">img — предмет, документ</option>'
+        + '<option value="scene">scene — место, панорама, интерьер</option>'
+        + '</select></label>'
+        + '<textarea data-f="desc" rows="5" placeholder="Описание кадра на английском: кто/что, ракурс, свет"></textarea>'
+        + '<footer class="dg-editor-actions">'
+        + '<button type="button" class="dg-chip-action" data-f="save">Сохранить</button>'
+        + '<button type="button" class="dg-chip-action" data-f="regen">Сохранить и перегенерировать</button>'
+        + '</footer></section>';
+    const sel = overlay.querySelector('[data-f="trigger"]');
+    const ta = overlay.querySelector('[data-f="desc"]');
+    sel.value = ['selfie', 'img', 'scene'].includes(slot.trigger) ? slot.trigger : '';
+    ta.value = slot.desc;
+    const submit = (regenerate) => {
+        const v = { trigger: sel.value || null, desc: ta.value, regenerate };
+        closeEditor();
+        _deps?.editSlotPrompt?.(msgId, artifactId, ordinal, v);
+    };
+    overlay.addEventListener('click', (e) => {
+        if (e.target.closest('[data-dg-close]')) { closeEditor(); return; }
+        if (e.target.closest('[data-f="save"]')) submit(false);
+        else if (e.target.closest('[data-f="regen"]')) submit(true);
+    });
+    document.body.appendChild(overlay);
+    _editor = overlay;
+}
+
+/** iframe → артефакт: источник команды изнутри sandbox-iframe. msgId читаем в
+ *  момент события — ST перенумеровывает mesid у живых узлов. */
+function findCmdSource(source) {
+    for (const f of document.querySelectorAll(`iframe.${FRAME_CLASS}`)) {
+        if (f.contentWindow !== source) continue;
+        const shell = f.closest(`[${SHELL_ATTR}]`);
+        const msgId = Number(f.closest('.mes')?.getAttribute('mesid'));
+        const artifactId = String(shell?.getAttribute(SHELL_ATTR) ?? '').split('|')[0] || null;
+        return Number.isFinite(msgId) && artifactId ? { msgId, artifactId } : null;
+    }
+    if (_popup?.frame?.contentWindow === source && _popup.msgId !== null) {
+        return { msgId: _popup.msgId, artifactId: _popup.artifactId };
+    }
+    return null;
+}
+
+function handleSlotCmd(e) {
+    const cmd = e?.data?.__dgCmd;
+    const ordinal = Number(e?.data?.ordinal);
+    if (typeof cmd !== 'string' || !Number.isFinite(ordinal)) return;
+    const src = findCmdSource(e.source);
+    if (!src) return;
+    if (cmd === 'slot-edit') { openSlotEditor(src.msgId, src.artifactId, ordinal); return; }
+    if (cmd === 'slot-cancel') { _deps?.cancelFill?.(src.msgId); return; }
+    if (cmd === 'slot-regen') {
+        const msg = getMessage(src.msgId);
+        const payload = msg ? readRawPayload(msg, msg.swipe_id ?? 0) : null;
+        const art = payload?.artifacts.find(a => a.id === src.artifactId);
+        _deps?.regenSlot?.(src.msgId, src.artifactId, ordinal, art ? slotCardId(art.html, ordinal) : null);
+    }
 }
 
 function onKeydown(e) {
-    if (e.key === 'Escape') closePopup();
+    if (e.key === 'Escape') { closePopup(); closeEditor(); }
 }
 
 /** Кнопки поста в .mes_buttons (форма Glosses): ◆ генерация/реген, 📷 фотослоты.
- *  Видны только в режиме buttonMode 'post'; busy-класс вешает setGenerating. */
-function ensureMsgButtons(mesEl, msgId, msg) {
+ *  Видны только в режиме buttonMode 'post'; busy-класс вешает setGenerating.
+ *  Экспорт — для тестов: регрессия «клик по устаревшему mesid». */
+export function ensureMsgButtons(mesEl, msgId, msg) {
     const btns = mesEl.querySelector('.mes_buttons');
     if (!btns) return;
     if (_deps?.settings?.().buttonMode !== 'post') {
@@ -283,7 +452,14 @@ function ensureMsgButtons(mesEl, msgId, msg) {
         gen = document.createElement('div');
         gen.className = 'mes_button dg-gen-btn';
         gen.innerHTML = '<i class="fa-solid fa-scroll"></i>';
-        gen.addEventListener('click', (e) => { e.stopPropagation(); _deps?.run?.(msgId); });
+        // id читаем в момент клика: ST перенумеровывает mesid у живых DOM-узлов
+        // (updateViewMessageIds после удаления/скрытия/переноса постов), и
+        // захваченный при создании id начинает указывать на чужое сообщение.
+        gen.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = Number(mesEl.getAttribute('mesid'));
+            if (Number.isFinite(id)) _deps?.run?.(id);
+        });
         const hint = btns.querySelector('.extraMesButtonsHint');
         if (hint) btns.insertBefore(gen, hint);
         else btns.prepend(gen);
@@ -297,7 +473,11 @@ function ensureMsgButtons(mesEl, msgId, msg) {
         cam.className = 'mes_button dg-photo-btn';
         cam.title = 'Сгенерировать фото для слотов (URIS)';
         cam.textContent = '📷';
-        cam.addEventListener('click', (e) => { e.stopPropagation(); _deps?.fillImageSlots?.(msgId); });
+        cam.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = Number(mesEl.getAttribute('mesid'));
+            if (Number.isFinite(id)) _deps?.fillImageSlots?.(id);
+        });
         gen.after(cam);
     } else if (!wantCam && cam) {
         cam.remove();
@@ -421,7 +601,9 @@ export function reconcileMessage(msgId) {
 function onDocumentClick(e) {
     const chipShell = e.target.closest?.(`[${SHELL_ATTR}]`);
     if (chipShell) {
-        const msgId = Number(chipShell.getAttribute('data-dg-msg'));
+        // mesid берём здесь, а не из запечённого data-dg-msg: ST перенумеровывает
+        // mesid у живых узлов, и записанный при монтаже id устаревает.
+        const msgId = Number(chipShell.closest('.mes')?.getAttribute('mesid') ?? chipShell.getAttribute('data-dg-msg'));
         const key = chipShell.getAttribute(SHELL_ATTR);
         if (e.target.closest('[data-dg-del]')) {
             deleteArtifact(msgId, String(key).split('|')[0]);
@@ -437,11 +619,16 @@ function onDocumentClick(e) {
             if (a) { saveArtifactFile(a); globalThis.toastr?.success('Diegetic: файл сохранён — открой его в браузере'); }
             return;
         }
+        if (e.target.closest('[data-dg-collapse]')) {
+            _expanded.delete(String(key).replace(/\|[oc]$/, ''));
+            reconcileMessage(msgId);
+            return;
+        }
         if (e.target.closest('[data-dg-open]')) {
             const mode = _deps?.settings?.().displayMode ?? 'inline';
             if (mode === 'popup') {
                 const a = artifactByKey(msgId, key);
-                if (a) openPopup(a);
+                if (a) openPopup(a, msgId);
             } else {
                 _expanded.add(String(key).replace(/\|[oc]$/, ''));
                 reconcileMessage(msgId);
@@ -449,18 +636,8 @@ function onDocumentClick(e) {
             return;
         }
     }
-    // ⟳ на заполненном фотослоте внутри артефакта — точечная перегенерация.
-    const regen = e.target.closest?.('.dg-slot-regen');
-    if (regen) {
-        e.preventDefault();
-        e.stopPropagation();
-        const msgId = Number(regen.closest('.mes')?.getAttribute('mesid'));
-        const ordinal = Number(regen.getAttribute('data-ordinal'));
-        const shellKeyAttr = regen.closest(`[${SHELL_ATTR}]`)?.getAttribute(SHELL_ATTR) || '';
-        const artifactId = shellKeyAttr.split('|')[0] || null;
-        const cardId = regen.closest('[data-dg-img]')?.querySelector('img.dg-slot-img')?.getAttribute('data-dg-card') || null;
-        if (Number.isFinite(msgId) && Number.isFinite(ordinal)) _deps?.regenSlot?.(msgId, artifactId, ordinal, cardId);
-    }
+    // Клики по контролам фотослотов (✎/⟳) приходят postMessage'ом из iframe —
+    // см. handleSlotCmd; в родительском document их целей нет.
 }
 
 export function initRender(deps = {}) {
@@ -471,10 +648,13 @@ export function initRender(deps = {}) {
     if (!_onMessage) {
         _onMessage = (e) => {
             const h = e?.data?.__dgH;
-            if (typeof h !== 'number') return;
-            for (const f of document.querySelectorAll(`iframe.${FRAME_CLASS}`)) {
-                if (f.contentWindow === e.source) { f.style.height = `${clampH(h)}px`; break; }
+            if (typeof h === 'number') {
+                for (const f of document.querySelectorAll(`iframe.${FRAME_CLASS}`)) {
+                    if (f.contentWindow === e.source) { f.style.height = `${clampH(h)}px`; break; }
+                }
+                return;
             }
+            if (e?.data?.__dgCmd !== undefined) handleSlotCmd(e);
         };
         window.addEventListener('message', _onMessage);
     }
@@ -508,6 +688,7 @@ export function shutdownRender() {
         _onClick = null;
     }
     closePopup();
+    closeEditor();
     _expanded.clear();
     if (typeof document !== 'undefined') {
         document.querySelectorAll(`[${SHELL_ATTR}]`).forEach(s => s.remove());

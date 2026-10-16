@@ -3,23 +3,27 @@ import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS, normalizeSettings, loadSettings, saveSettings } from '../src/settings.js';
 
 test('normalizeSettings: валидный ввод сохраняется, мусор — дефолты', () => {
-  const s = normalizeSettings({ enabled: false, maxPerMessage: 3, contextDepth: 5, appearance: 'silent', activeProfile: 'pro' });
+  const s = normalizeSettings({ enabled: false, maxPerMessage: 3, contextDepth: 5, appearance: 'silent', source: 'custom' });
   assert.equal(s.enabled, false);
   assert.equal(s.maxPerMessage, 3);
   assert.equal(s.contextDepth, 5);
   assert.equal(s.appearance, 'silent');
-  assert.equal(s.activeProfile, 'pro');
+  assert.equal(s.source, 'custom');
 
-  const d = normalizeSettings({ maxPerMessage: 99, contextDepth: -1, appearance: 'kek' });
+  const d = normalizeSettings({ maxPerMessage: 99, contextDepth: -1, appearance: 'kek', source: 'kek' });
   assert.equal(d.maxPerMessage, DEFAULT_SETTINGS.maxPerMessage);
   assert.equal(d.contextDepth, DEFAULT_SETTINGS.contextDepth);
   assert.equal(d.appearance, DEFAULT_SETTINGS.appearance);
+  assert.equal(d.source, 'current');
 });
 
-test('нормализация не даёт потерять дефолтный профиль', () => {
+test('источник по умолчанию — current, мусорные поля отбрасываются', () => {
   const s = normalizeSettings({});
-  assert.ok(Array.isArray(s.profiles) && s.profiles.length >= 1);
-  assert.ok(s.profiles.some(p => p.id === 'default'));
+  assert.equal(s.source, 'current');
+  assert.deepEqual(s.cmProfile, null);
+  assert.deepEqual(s.custom, { apiurl: '', model: '' });
+  assert.deepEqual(s.httpAllowList, []);
+  assert.equal(s.customExtraBody, '');
 });
 
 test('load/save через абстрактное хранилище', () => {
@@ -37,79 +41,102 @@ test('loadSettings переживает битый JSON в хранилище', 
   assert.equal(s.enabled, DEFAULT_SETTINGS.enabled);
 });
 
-test('round-trip кастомного профиля через save/load', () => {
+test('round-trip: свой endpoint с http-allowlist', () => {
   const backing = {};
   const storage = { get: () => backing.s, set: (v) => { backing.s = v; } };
-  const s = normalizeSettings({ profiles: [{ id: 'pro', name: 'Pro', source: 'custom', sourceConfig: { apiurl: 'https://x/v1', key: 'sk-1', model: 'm' } }], activeProfile: 'pro' });
+  const s = normalizeSettings({
+    source: 'custom',
+    custom: { apiurl: 'http://127.0.0.1:5000/v1', model: 'gemini' },
+    customExtraBody: '{"reasoning_effort":"none"}',
+    httpAllowList: ['http://127.0.0.1:5000'],
+  });
   saveSettings(storage, s);
   const loaded = loadSettings(storage);
-  const p = loaded.profiles.find(x => x.id === 'pro');
-  assert.ok(p, 'профиль пережил round-trip');
-  assert.equal(p.source, 'custom');
-  assert.equal(p.sourceConfig.key, 'sk-1');
-  assert.equal(loaded.activeProfile, 'pro');
+  assert.equal(loaded.source, 'custom');
+  assert.equal(loaded.custom.apiurl, 'http://127.0.0.1:5000/v1');
+  assert.equal(loaded.custom.model, 'gemini');
+  assert.equal(loaded.customExtraBody, '{"reasoning_effort":"none"}');
+  assert.deepEqual(loaded.httpAllowList, ['http://127.0.0.1:5000']);
 });
 
-test('templateText переживает normalizeSettings и save/load round-trip', () => {
+test('round-trip: профиль CM', () => {
   const backing = {};
   const storage = { get: () => backing.s, set: (v) => { backing.s = v; } };
-  const s = normalizeSettings({ profiles: [{ id: 'a', name: 'A', source: 'current', templateText: '{{CONTRACT}}\nСвой стиль' }], activeProfile: 'a' });
-  assert.equal(s.profiles[0].templateText, '{{CONTRACT}}\nСвой стиль');
-  assert.equal(normalizeSettings({ profiles: [{ id: 'b', name: 'B' }] }).profiles[0].templateText, '', 'без templateText → пустая строка (= встроенный)');
-  saveSettings(storage, s);
+  saveSettings(storage, normalizeSettings({ source: 'profile', cmProfile: { profileId: 'p1', profileName: 'Грок' } }));
   const loaded = loadSettings(storage);
-  assert.equal(loaded.profiles[0].templateText, '{{CONTRACT}}\nСвой стиль');
+  assert.equal(loaded.source, 'profile');
+  assert.deepEqual(loaded.cmProfile, { profileId: 'p1', profileName: 'Грок' });
 });
 
-test('миграция: lensText старых профилей переезжает в templateText, сентинел @universal → пусто', () => {
-  const s = normalizeSettings({ profiles: [
-    { id: 'old1', name: 'O1', lensText: '@universal' },
-    { id: 'old2', name: 'O2', lensText: '{{CONTRACT}}\nкастом' },
-  ] });
-  assert.equal(s.profiles[0].templateText, '', '@universal → пустая строка (= встроенный)');
-  assert.equal(s.profiles[1].templateText, '{{CONTRACT}}\nкастом');
-  assert.ok(!('lensText' in s.profiles[0]), 'старое поле не протекает наружу');
-});
-
-test('дефолтный профиль: источник current, шаблон пустой (= встроенный универсальный)', () => {
-  const s = normalizeSettings({});
-  const d = s.profiles.find(p => p.id === 'default');
-  assert.ok(d, 'дефолтный профиль на месте');
-  assert.equal(d.source, 'current');
-  assert.equal(d.templateText, '');
-  assert.equal(d.name, 'Универсальный');
-});
-
-test('источник profile (Connection Manager): сохраняется с sourceConfig.profileId', () => {
-  const backing = {};
-  const storage = { get: () => backing.s, set: (v) => { backing.s = v; } };
+test('миграция: профильный список → один источник (CM)', () => {
   const s = normalizeSettings({
     profiles: [{ id: 'cm', name: 'CM', source: 'profile', sourceConfig: { profileId: 'p1', profileName: 'Грок' } }],
     activeProfile: 'cm',
   });
-  assert.equal(s.profiles[0].source, 'profile');
-  assert.equal(s.profiles[0].sourceConfig.profileId, 'p1');
-  saveSettings(storage, s);
-  const p = loadSettings(storage).profiles[0];
-  assert.equal(p.source, 'profile');
-  assert.equal(p.sourceConfig.profileName, 'Грок');
+  assert.equal(s.source, 'profile');
+  assert.deepEqual(s.cmProfile, { profileId: 'p1', profileName: 'Грок' });
+  assert.deepEqual(s.templates, {}, 'текстовых шаблонов из профиля не было');
+  // Повторная нормализация уже нормализованных — источник не переезжает второй раз
+  const again = normalizeSettings(s);
+  assert.equal(again.source, 'profile');
+  assert.deepEqual(again.cmProfile, { profileId: 'p1', profileName: 'Грок' });
 });
 
-test('мусорный source деградирует в current', () => {
-  const s = normalizeSettings({ profiles: [{ id: 'x', name: 'X', source: 'kek' }] });
-  assert.equal(s.profiles[0].source, 'current');
+test('миграция: профильный список → custom endpoint', () => {
+  const s = normalizeSettings({
+    profiles: [{ id: 'c', name: 'C', source: 'custom', sourceConfig: { apiurl: 'https://x/v1', model: 'm1' } }],
+    activeProfile: 'c',
+  });
+  assert.equal(s.source, 'custom');
+  assert.deepEqual(s.custom, { apiurl: 'https://x/v1', model: 'm1' });
+  assert.equal(s.cmProfile, null);
+});
+
+test('миграция: legacy lensText старых профилей переезжает в именованные шаблоны', () => {
+  const s = normalizeSettings({ profiles: [
+    { id: 'old1', name: 'O1', lensText: '@universal' },
+    { id: 'old2', name: 'O2', lensText: '{{CONTRACT}}\nкастом' },
+  ] });
+  assert.deepEqual(s.templates, { O2: '{{CONTRACT}}\nкастом' }, 'сентинел @universal не импортируется');
+  assert.equal(s.activeTemplate, 'universal');
+});
+
+test('миграция: профильные templateText переезжают в именованные шаблоны один раз', () => {
+  const s = normalizeSettings({
+    profiles: [
+      { id: 'a', name: 'Стиль А', source: 'current', templateText: '{{CONTRACT}}\nА' },
+      { id: 'b', name: 'Пустой', templateText: '' },
+    ],
+  });
+  assert.deepEqual(s.templates, { 'Стиль А': '{{CONTRACT}}\nА' });
+  const again = normalizeSettings(s);
+  assert.deepEqual(again.templates, { 'Стиль А': '{{CONTRACT}}\nА' });
+});
+
+test('enabled: автогенерация выключена по умолчанию, включается только явно', () => {
+  assert.equal(normalizeSettings({}).enabled, false, 'нет значения → выключена');
+  assert.equal(normalizeSettings({ enabled: 'yes' }).enabled, false, 'мусор → выключена');
+  assert.equal(normalizeSettings({ enabled: false }).enabled, false);
+  assert.equal(normalizeSettings({ enabled: true }).enabled, true, 'явное включение сохраняется');
+});
+
+test('ctxHistory: тумблер истории чата, включён по умолчанию', () => {
+  assert.equal(normalizeSettings({}).ctxHistory, true);
+  assert.equal(normalizeSettings({ ctxHistory: false }).ctxHistory, false);
+  assert.equal(normalizeSettings({ ctxHistory: 'no' }).ctxHistory, true, 'мусор → дефолт');
+});
+
+test('templates: мусор отбрасывается, активное имя по умолчанию', () => {
+  const s = normalizeSettings({ templates: { 'Мой': 'текст', '': 'безымянный', universal: 'тень встроенного', ok: 7 } });
+  assert.deepEqual(s.templates, { 'Мой': 'текст' }, 'пустые имена, тени встроенных и не-строки — вон');
+  assert.equal(s.activeTemplate, 'universal');
+  assert.deepEqual(normalizeSettings({ templates: 'мусор' }).templates, {});
+  assert.equal(normalizeSettings({ activeTemplate: 'Мой' }).activeTemplate, 'Мой');
 });
 
 test('displayMode: валидный сохраняется, мусор — inline', () => {
-    assert.equal(normalizeSettings({ displayMode: 'popup' }).displayMode, 'popup');
-    assert.equal(normalizeSettings({ displayMode: 'expand' }).displayMode, 'expand');
-    assert.equal(normalizeSettings({ displayMode: 'fullscreen' }).displayMode, 'inline');
-    assert.equal(normalizeSettings({}).displayMode, 'inline');
-});
-
-test('builtin: валидная основа сохраняется, мусор — universal', () => {
-    const p = normalizeSettings({ profiles: [{ id: 'a', builtin: 'universal-photo' }] }).profiles[0];
-    assert.equal(p.builtin, 'universal-photo');
-    assert.equal(normalizeSettings({ profiles: [{ id: 'a', builtin: 'nope' }] }).profiles[0].builtin, 'universal');
-    assert.equal(normalizeSettings({}).profiles[0].builtin, 'universal');
+  assert.equal(normalizeSettings({ displayMode: 'popup' }).displayMode, 'popup');
+  assert.equal(normalizeSettings({ displayMode: 'expand' }).displayMode, 'expand');
+  assert.equal(normalizeSettings({ displayMode: 'fullscreen' }).displayMode, 'inline');
+  assert.equal(normalizeSettings({}).displayMode, 'inline');
 });

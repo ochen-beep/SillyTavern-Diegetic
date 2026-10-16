@@ -45,3 +45,30 @@ test('endRun сменённого прогона не трогает слот п
   assert.equal(c.endRun(r2), true);
   assert.equal(c.isCurrent(r2), false);
 });
+
+test('abortKind: отменяет только свой вид, слот чистится сразу', () => {
+  const c = createGenerationCoordinator();
+  const gen = c.beginRun(1, 'gen');
+  assert.equal(c.abortKind(1, 'fill'), false, 'чужой вид не трогается');
+  assert.equal(gen.ctrl.signal.aborted, false);
+  assert.equal(c.abortKind(1, 'gen'), true);
+  assert.equal(gen.ctrl.signal.aborted, true);
+  assert.equal(c.isCurrent(gen), false, 'отменённый прогон больше не current');
+  assert.equal(c.endRun(gen), false, 'слот уже очищен — следующий клик стартует новый прогон');
+});
+
+test('abortKind: заливка фото отменяется независимо от генерации', () => {
+  const c = createGenerationCoordinator();
+  const fill = c.beginRun(1, 'fill');
+  assert.equal(c.abortKind(1, 'gen'), false);
+  assert.equal(fill.ctrl.signal.aborted, false, '◆ не убивает заливку');
+  assert.equal(c.abortKind(1, 'fill'), true);
+  assert.equal(fill.ctrl.signal.aborted, true);
+});
+
+test('bumpMessageRevision абортит прогон любого вида', () => {
+  const c = createGenerationCoordinator();
+  const fill = c.beginRun(1, 'fill');
+  c.bumpMessageRevision(1);
+  assert.equal(fill.ctrl.signal.aborted, true);
+});

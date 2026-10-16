@@ -15,6 +15,7 @@ import {
 import {
     parseImageSlots, hasPendingSlots, setSlotState,
     injectSlotImage, replaceSlotImage, generateSlotImage, getUrisBridge,
+    setSlotPrompt, slotCardId,
 } from './images.js';
 
 const byteLength = (s) => new TextEncoder().encode(s).length;
@@ -33,7 +34,6 @@ export function createPipeline(deps) {
     // Обращение — в точке вызова, не деструктуризацией: тесты подменяют
     // deps.generateText между прогонами.
     const { notify } = deps;
-    const activeProfile = () => deps.settings.profiles.find(p => p.id === deps.settings.activeProfile) || deps.settings.profiles[0];
 
     async function _run(messageId, { force = false } = {}) {
         const s = deps.settings;
@@ -50,7 +50,8 @@ export function createPipeline(deps) {
 
         const run = deps.coordinator.beginRun(messageId);
         try {
-            const profile = activeProfile();
+            // Дескриптор источника собирает хост (index.js) из настроек.
+            const profile = deps.getSourceProfile();
             // resolveTemplate async: встроенный шаблон тянется fetch'ем (core.js)
             const templateText = await deps.resolveTemplate(profile);
             const { system, user } = assemblePromptParts({
@@ -72,6 +73,11 @@ export function createPipeline(deps) {
                 // Контракт запрещает отказ, так что это именно сбой модели.
                 notify.error(`Diegetic: модель не вернула артефакт (${parsed.errors[0] || 'нет пар комментарий+fence'})`);
                 return;
+            }
+            // Часть пар не распарсилась — скажем, а не выкинем молча: по тосту
+            // видно, почему при «3 артефакта» в посте оказался один.
+            if (parsed.errors.length > 0) {
+                notify.error(`Diegetic: отброшено ${parsed.errors.length} из ответа (${parsed.errors.join('; ')})`);
             }
 
             // Якорная валидация против сырой прозы — как раньше.
@@ -110,73 +116,81 @@ export function createPipeline(deps) {
      * перечитывается перед каждым слотом и каждой записью: свайп/правка
      * (digest сменился) прерывают заливку — платный результат не вписывается
      * в чужой текст. Оплаченный слот (done) не откатывается.
+     * Свой прогон координатора: свайп/правка/новая генерация этого поста
+     * абортят платную генерацию (сигнал доезжает до URIS-моста), слот при
+     * этом сбрасывается из loading обратно в pending.
      * opts.artifactId + opts.onlyOrdinal — точечная перегенерация одного слота;
      * opts.removeCardId — карточка URIS прошлого фото, удаляется после успеха.
      */
     async function _fillImageSlots(messageId, { artifactId = null, onlyOrdinal = null, removeCardId = null } = {}) {
         const s = deps.settings;
         if (s.imageMode === 'off') return;
-        const read = () => {
-            const m = deps.getMessage(messageId);
-            if (!m) return null;
-            return readVerifiedPayload(m, m.swipe_id ?? 0);
-        };
-        const write = (payload) => {
-            const m = deps.getMessage(messageId);
-            if (!m || !writePayload(m, m.swipe_id ?? 0, payload)) return false;
-            deps.persistChat();
-            deps.notifyRender?.(messageId);
-            return true;
-        };
-        const mutateArtifact = (baseDigest, aid, fn) => {
-            const p = read();
-            if (!p || p.contentDigest !== baseDigest) return false;
-            const idx = p.artifacts.findIndex(a => a.id === aid);
-            if (idx < 0) return false;
-            const html = fn(p.artifacts[idx].html);
-            if (html === null || html === undefined) return false;
-            const artifacts = p.artifacts.slice();
-            artifacts[idx] = { ...p.artifacts[idx], html, bytes: byteLength(html) };
-            return write({ ...p, artifacts });
-        };
+        const run = deps.coordinator.beginRun(messageId, 'fill');
+        try {
+            const read = () => {
+                const m = deps.getMessage(messageId);
+                if (!m) return null;
+                return readVerifiedPayload(m, m.swipe_id ?? 0);
+            };
+            const write = (payload) => {
+                const m = deps.getMessage(messageId);
+                if (!m || !writePayload(m, m.swipe_id ?? 0, payload)) return false;
+                deps.persistChat();
+                deps.notifyRender?.(messageId);
+                return true;
+            };
+            const mutateArtifact = (baseDigest, aid, fn) => {
+                const p = read();
+                if (!p || p.contentDigest !== baseDigest) return false;
+                const idx = p.artifacts.findIndex(a => a.id === aid);
+                if (idx < 0) return false;
+                const html = fn(p.artifacts[idx].html);
+                if (html === null || html === undefined) return false;
+                const artifacts = p.artifacts.slice();
+                artifacts[idx] = { ...p.artifacts[idx], html, bytes: byteLength(html) };
+                return write({ ...p, artifacts });
+            };
 
-        const base = read();
-        if (!base) return;
-        const baseDigest = base.contentDigest;
-        const targets = [];
-        base.artifacts.forEach((a, ai) => {
-            if (artifactId !== null && a.id !== artifactId) return;
-            for (const sl of parseImageSlots(a.html)) {
-                if (onlyOrdinal === null ? sl.state !== 'done' : sl.ordinal === onlyOrdinal) {
-                    targets.push({ artifactId: a.id, slot: sl });
+            const base = read();
+            if (!base) return;
+            const baseDigest = base.contentDigest;
+            const targets = [];
+            base.artifacts.forEach((a, ai) => {
+                if (artifactId !== null && a.id !== artifactId) return;
+                for (const sl of parseImageSlots(a.html)) {
+                    if (onlyOrdinal === null ? sl.state !== 'done' : sl.ordinal === onlyOrdinal) {
+                        targets.push({ artifactId: a.id, slot: sl });
+                    }
+                }
+            });
+            if (!targets.length) return;
+
+            let firstError = null;
+            for (const { artifactId: aid, slot } of targets) {
+                if (!mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, 'loading'))) return;
+                try {
+                    const res = await generateSlotImage(slot, { quality: s.imageQuality, imageSize: '1K', signal: run.ctrl.signal });
+                    const ok = mutateArtifact(baseDigest, aid, (html) =>
+                        replaceSlotImage(html, slot.ordinal, res.imagePath, res.cardId)
+                        ?? injectSlotImage(html, slot.ordinal, res.imagePath, res.cardId));
+                    if (!ok) return; // digest ушёл или слот исчез — платный результат не пишем в чужое
+                    if (removeCardId) {
+                        try { await getUrisBridge()?.removeCard(removeCardId, { caller: 'sthtml' }); } catch { /* галерея — некритично */ }
+                    }
+                } catch (e) {
+                    if (e?.code === 'ABORTED' || e?.name === 'AbortError') {
+                        mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, null));
+                        return;
+                    }
+                    if (!mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, 'error'))) return;
+                    firstError = firstError || e;
                 }
             }
-        });
-        if (!targets.length) return;
-
-        let firstError = null;
-        for (const { artifactId: aid, slot } of targets) {
-            if (!mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, 'loading'))) return;
-            try {
-                const res = await generateSlotImage(slot, { quality: s.imageQuality, imageSize: '1K' });
-                const ok = mutateArtifact(baseDigest, aid, (html) =>
-                    replaceSlotImage(html, slot.ordinal, res.imagePath, res.cardId)
-                    ?? injectSlotImage(html, slot.ordinal, res.imagePath, res.cardId));
-                if (!ok) return; // digest ушёл или слот исчез — платный результат не пишем в чужое
-                if (removeCardId) {
-                    try { await getUrisBridge()?.removeCard(removeCardId, { caller: 'sthtml' }); } catch { /* галерея — некритично */ }
-                }
-            } catch (e) {
-                if (e?.code === 'ABORTED' || e?.name === 'AbortError') {
-                    mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, null));
-                    return;
-                }
-                if (!mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, 'error'))) return;
-                firstError = firstError || e;
-            }
+            if (firstError) notify.error(`Diegetic: фото не сгенерировано (${firstError?.message || firstError})`);
+            else notify.ready('Diegetic: фото готово');
+        } finally {
+            deps.coordinator.endRun(run);
         }
-        if (firstError) notify.error(`Diegetic: фото не сгенерировано (${firstError?.message || firstError})`);
-        else notify.ready('Diegetic: фото готово');
     }
 
     /** Есть ли незаполненные фотослоты у артефактов сообщения (для 📷-кнопки). */
@@ -187,6 +201,39 @@ export function createPipeline(deps) {
         return !!p?.artifacts.some(a => hasPendingSlots(a.html));
     }
 
+    /**
+     * Правка промпта фотослота из редактора (✎ в артефакте). Тот же digest-гард,
+     * что у заливки фото: readVerifiedPayload отсекает чужие/протухшие payload'ы.
+     * regenerate=true — сразу точечная перегенерация (старая карточка URIS
+     * убирается после успеха); false — слот просто ждёт 📷/auto.
+     */
+    async function _updateSlotPrompt(messageId, artifactId, ordinal, { trigger = null, desc = '', regenerate = false } = {}) {
+        const s = deps.settings;
+        const msg = deps.getMessage(messageId);
+        if (!msg) return;
+        const swipeIdx = msg.swipe_id ?? 0;
+        const p = readVerifiedPayload(msg, swipeIdx);
+        if (!p) return;
+        const idx = p.artifacts.findIndex(a => a.id === artifactId);
+        if (idx < 0) return;
+        const nextHtml = setSlotPrompt(p.artifacts[idx].html, ordinal, { trigger, desc });
+        if (nextHtml === null) {
+            notify.error('Diegetic: промпт фотослота пуст или слот не найден');
+            return;
+        }
+        const artifacts = p.artifacts.slice();
+        artifacts[idx] = { ...p.artifacts[idx], html: nextHtml, bytes: byteLength(nextHtml) };
+        if (!writePayload(msg, swipeIdx, { ...p, artifacts })) return;
+        await deps.persistChat();
+        deps.notifyRender?.(messageId);
+        if (regenerate && s.imageMode !== 'off') {
+            await _fillImageSlots(messageId, {
+                artifactId, onlyOrdinal: ordinal,
+                removeCardId: slotCardId(nextHtml, ordinal),
+            });
+        }
+    }
+
     // run() и fillImageSlots() никогда не реджектятся: обработчики событий fire-and-forget.
     const fillImageSlots = (messageId, opts = {}) =>
         _fillImageSlots(messageId, opts).catch((e) => notify.error(`Diegetic: сбой фотослотов (${e?.message || e})`));
@@ -195,6 +242,9 @@ export function createPipeline(deps) {
         run: (messageId, opts = {}) =>
             _run(messageId, opts).catch((e) => notify.error(`Diegetic: сбой (${e?.message || e})`)),
         fillImageSlots,
+        updateSlotPrompt: (messageId, artifactId, ordinal, opts = {}) =>
+            _updateSlotPrompt(messageId, artifactId, ordinal, opts)
+                .catch((e) => notify.error(`Diegetic: сбой промпта слота (${e?.message || e})`)),
         hasPendingPhotoSlots,
     };
 }

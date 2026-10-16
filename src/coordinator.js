@@ -19,9 +19,10 @@
 
 /**
  * @returns {{
- *   beginRun(messageId: number|string): { id: string, token: number, ctrl: AbortController, revision: number, epoch: number },
+ *   beginRun(messageId: number|string, kind?: 'gen'|'fill'): { id: string, token: number, ctrl: AbortController, revision: number, epoch: number },
  *   isCurrent(run: { id: string, ctrl: AbortController, revision: number, epoch: number } | null | undefined): boolean,
  *   endRun(run: { id: string, ctrl: AbortController } | null | undefined): boolean,
+ *   abortKind(messageId: number|string, kind: 'gen'|'fill'): boolean,
  *   bumpMessageRevision(messageId: number|string): void,
  *   invalidateAll(): void,
  * }}
@@ -29,7 +30,7 @@
 export function createGenerationCoordinator() {
     /** @type {Record<string, number>} per-message revision counters */
     const revisions = {};
-    /** @type {Record<string, AbortController>} per-message run slots */
+    /** @type {Record<string, {ctrl: AbortController, kind: 'gen'|'fill'}>} per-message run slots */
     const controllers = {};
     let epoch = 0;
     let tokenSeq = 0;
@@ -38,14 +39,15 @@ export function createGenerationCoordinator() {
 
     /**
      * Инвалидация ОДНОГО сообщения: поднять revision и абортить его текущий
-     * прогон. Чужие сообщения не затрагиваются. Вызывать из onMsgSwiped /
-     * onMsgEdited (и regenerate).
+     * прогон (любого вида — свайп убивает и генерацию, и заливку фото).
+     * Чужие сообщения не затрагиваются. Вызывать из onMsgSwiped / onMsgEdited
+     * (и regenerate).
      * @param {number|string} messageId
      */
     function bumpMessageRevision(messageId) {
         const id = String(messageId);
         revisions[id] = revisionOf(id) + 1;
-        controllers[id]?.abort();
+        controllers[id]?.ctrl.abort();
     }
 
     /**
@@ -54,19 +56,22 @@ export function createGenerationCoordinator() {
      */
     function invalidateAll() {
         epoch++;
-        for (const ctrl of Object.values(controllers)) ctrl.abort();
+        for (const rec of Object.values(controllers)) rec.ctrl.abort();
     }
 
     /**
      * Начать прогон сообщения. Новый прогон того же сообщения сменяет
      * предыдущий (его контроллер абортится, слот замещается).
+     * kind — вид работ: 'gen' (генерация артефактов) или 'fill' (заливка фото):
+     * один слот на оба вида, но abortKind отменяет только свой вид.
      * @param {number|string} messageId
+     * @param {'gen'|'fill'} [kind]
      */
-    function beginRun(messageId) {
+    function beginRun(messageId, kind = 'gen') {
         const id = String(messageId);
-        controllers[id]?.abort();
+        controllers[id]?.ctrl.abort();
         const ctrl = new AbortController();
-        controllers[id] = ctrl;
+        controllers[id] = { ctrl, kind };
         return { id, token: ++tokenSeq, ctrl, revision: revisionOf(id), epoch };
     }
 
@@ -77,7 +82,7 @@ export function createGenerationCoordinator() {
      */
     function isCurrent(run) {
         if (!run) return false;
-        return controllers[run.id] === run.ctrl
+        return controllers[run.id]?.ctrl === run.ctrl
             && revisionOf(run.id) === run.revision
             && run.epoch === epoch;
     }
@@ -90,10 +95,27 @@ export function createGenerationCoordinator() {
      */
     function endRun(run) {
         if (!run) return false;
-        if (controllers[run.id] !== run.ctrl) return false;
+        if (controllers[run.id]?.ctrl !== run.ctrl) return false;
         delete controllers[run.id];
         return true;
     }
 
-    return { beginRun, isCurrent, endRun, bumpMessageRevision, invalidateAll };
+    /**
+     * Отменить прогон заданного вида (повторный клик по кнопке = отмена).
+     * true — был живой прогон ЭТОГО вида: слот очищен сразу, чтобы следующий
+     * клик уже запускал новый прогон, не дожидаясь размотки старого. Прогон
+     * другого вида не трогается: ◆ во время заливки фото не убивает её.
+     * @param {number|string} messageId
+     * @param {'gen'|'fill'} kind
+     */
+    function abortKind(messageId, kind) {
+        const id = String(messageId);
+        const rec = controllers[id];
+        if (!rec || rec.kind !== kind) return false;
+        delete controllers[id];
+        rec.ctrl.abort();
+        return true;
+    }
+
+    return { beginRun, isCurrent, endRun, abortKind, bumpMessageRevision, invalidateAll };
 }

@@ -14,8 +14,14 @@ test('контракт содержит ключевые правила форм
 test('контракт приказывает делать артефакт, а не решать, делать ли', () => {
   // Требование: универсальный шаблон = команда. Никаких лазеек «импульса нет».
   assert.ok(!/pulse/i.test(DIEGETIC_CONTRACT), 'в контракте не должно быть слова pulse вовсе');
-  assert.match(DIEGETIC_CONTRACT, /ОБЯЗАТЕЛЕН/u);
-  assert.match(DIEGETIC_CONTRACT, /Отказ недопустим/u);
+  assert.match(DIEGETIC_CONTRACT, /MANDATORY/iu);
+  assert.match(DIEGETIC_CONTRACT, /Refusal is not allowed/iu);
+});
+
+test('промпты на английском: контракт и склейка без кириллицы', () => {
+  assert.ok(!/\p{Script=Cyrillic}/u.test(DIEGETIC_CONTRACT), 'контракт — только английский');
+  const p = assemblePrompt({ templateText: 'x{{CONTRACT}}', postText: 'P', maxCount: 1 });
+  assert.ok(!/\p{Script=Cyrillic}/u.test(p), 'служебные строки склейки — только английский');
 });
 
 test('universal.md — императивный шаблон без отказных формулировок', () => {
@@ -29,7 +35,7 @@ test('universal.md — императивный шаблон без отказн
 test('assemblePrompt подставляет {{CONTRACT}} и {{MAX_COUNT}}', () => {
     const p = assemblePrompt({ templateText: 'Шаблон.\n{{CONTRACT}}', postText: 'ПОСТ', maxCount: 3 });
     assert.ok(!p.includes('{{CONTRACT}}'));
-    assert.ok(p.includes('не более 3'));
+    assert.ok(p.includes('exactly 3'));
     assert.ok(p.includes('ПОСТ'));
 });
 
@@ -43,10 +49,29 @@ test('assemblePrompt: шаблон без маркера — контракт в
     assert.ok(p.includes('<!--DIEGETIC'));
 });
 
+test('assemblePrompt: контракт не дублируется (регрессия «дважды отправляется»)', () => {
+    // Старый шаблон с контрактом, вписанным целиком и без {{CONTRACT}}:
+    // повторная вставка давала два экземпляра в одном запросе.
+    const legacy = 'Мои правила.\n\n### TOOL — DIEGETIC HTML (контракт ответа)\nСтарый текст контракта.';
+    const p = assemblePrompt({ templateText: legacy, postText: 'P', maxCount: 1 });
+    assert.equal(p.split('### TOOL — DIEGETIC HTML').length - 1, 1, 'сигнатура контракта встречается один раз');
+    const parts = assemblePromptParts({ templateText: legacy, postText: 'P', maxCount: 1 });
+    assert.equal(parts.system.split('### TOOL — DIEGETIC HTML').length - 1, 1);
+    // С плейсхолдером — по-прежнему ровно одна вставка
+    const withPlaceholder = assemblePrompt({ templateText: 'x\n{{CONTRACT}}', postText: 'P', maxCount: 1 });
+    assert.equal(withPlaceholder.split('### TOOL — DIEGETIC HTML').length - 1, 1);
+});
+
+test('контракт: библиотеки не запрещены целиком — только неоправданные', () => {
+    // Замечание тестеров: «без гигантских библиотек» ограничивало модель.
+    assert.ok(!/гигантских библиотек|giant libraries/i.test(DIEGETIC_CONTRACT));
+    assert.match(DIEGETIC_CONTRACT, /external libraries only when the medium truly requires/iu);
+});
+
 test('assemblePromptParts: system = шаблон+контракт, user = пост; контекст перед постом', () => {
     const parts = assemblePromptParts({ templateText: 'Шаблон.\n{{CONTRACT}}', postText: 'ПОСТ', contextBlock: 'РАННЕЕ', maxCount: 2 });
     assert.ok(!parts.system.includes('{{CONTRACT}}'));
-    assert.match(parts.system, /не более 2/);
+    assert.match(parts.system, /exactly 2/);
     assert.ok(parts.system.includes('Шаблон.'));
     assert.ok(!parts.system.includes('ПОСТ'));
     assert.ok(!parts.user.includes('TOOL — DIEGETIC'));

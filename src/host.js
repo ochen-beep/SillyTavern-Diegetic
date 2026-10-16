@@ -4,6 +4,7 @@
 
 import { getCtx, getApiKey } from './core.js';
 import { normalizeCmProfiles, buildCmMessages, extractCmText, cmErrorMessage } from './cm.js';
+import { classifyEndpoint, isOriginAllowed } from './endpoint-policy.js';
 
 export function getMessage(id) {
     return getCtx()?.chat?.[Number(id)] ?? null;
@@ -42,10 +43,17 @@ async function generateViaCm({ system, user, profile, signal }) {
     for (let i = 0; i < 15 && listCmProfiles().length === 0; i++) {
         await new Promise(r => setTimeout(r, 300));
     }
+    // Доп. параметры запроса (например, отключение reasoning) — в payload.
+    let override = {};
+    const extraRaw = String(profile?.sourceConfig?.extraBody ?? '').trim();
+    if (extraRaw) {
+        try { override = JSON.parse(extraRaw); } catch { throw new Error('«Доп. параметры» — не JSON'); }
+        if (!override || typeof override !== 'object' || Array.isArray(override)) throw new Error('«Доп. параметры» — должен быть JSON-объект');
+    }
     let resp;
     try {
         resp = await svc.sendRequest(profileId, buildCmMessages({ system, user }), undefined,
-            { stream: false, signal: signal || null, extractData: true, includePreset: false, includeInstruct: false });
+            { stream: false, signal: signal || null, extractData: true, includePreset: false, includeInstruct: false }, override);
     } catch (e) {
         if (signal?.aborted || e?.name === 'AbortError' || e?.cause?.name === 'AbortError') {
             throw new DOMException('Aborted', 'AbortError');
@@ -59,24 +67,33 @@ async function generateViaCm({ system, user, profile, signal }) {
 
 async function generateViaCustom({ system, user, profile, signal }) {
     const sc = profile?.sourceConfig || {};
-    const url = String(sc.apiurl || '').trim().replace(/\/+$/, '');
-    // ponytail: только https; http разрешён на loopback — вместо allow-list/confirm-UI из Glosses
-    if (!/^https:\/\//i.test(url) && !/^http:\/\/(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)(:\d+)?\//i.test(url + '/')) {
-        throw new Error('custom endpoint: нужен https (http — только localhost)');
+    // Политика эндпоинта: без учётных данных в URL; https — свободно, http —
+    // только loopback, прочий plain-HTTP — по явному allowlist origin'ов.
+    const ep = classifyEndpoint(sc.apiurl);
+    if (!ep.ok) throw new Error(`custom endpoint: ${ep.error}`);
+    if (ep.kind === 'insecure-http' && !isOriginAllowed(ep.origin, profile?.httpAllowList)) {
+        throw new Error(`custom endpoint: plain-HTTP вне localhost запрещён — подтверди «${ep.origin}» в настройках источника`);
     }
-    const key = (await getApiKey(profile.id)) || String(sc.key ?? '');
+    const key = (await getApiKey('source')) || '';
+    let extra = {};
+    const extraRaw = String(sc.extraBody ?? '').trim();
+    if (extraRaw) {
+        try { extra = JSON.parse(extraRaw); } catch { throw new Error('custom endpoint: «Доп. параметры» — не JSON'); }
+        if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error('custom endpoint: «Доп. параметры» — должен быть JSON-объект');
+    }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(new Error('custom endpoint: таймаут 60 с')), 60_000);
     const onAbort = () => ctrl.abort(signal.reason);
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
-        const res = await fetch(`${url}/chat/completions`, {
+        const res = await fetch(ep.normalized, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
             body: JSON.stringify({
                 model: sc.model || undefined,
                 messages: buildCmMessages({ system, user }),
                 stream: false,
+                ...extra, // например, отключение reasoning у конкретного провайдера
             }),
             signal: ctrl.signal,
         });
@@ -105,5 +122,16 @@ export async function generateText({ system, user, profile, signal }) {
     const usr = subst(ctx, user);
     if (profile?.source === 'profile') return generateViaCm({ system: sys, user: usr, profile, signal });
     if (profile?.source === 'custom') return generateViaCustom({ system: sys, user: usr, profile, signal });
-    return ctx.generateRaw({ prompt: `${sys}\n\n### Источник анализа\n${usr}` });
+    const prompt = `${sys}\n\n### Post to analyze\n${usr}`;
+    // generateRaw не принимает signal (его AbortController внутренний): мягкий
+    // аборт — ожидание разматывается сразу, запрос догорает в фоне, а его
+    // результат выбрасывает commit-гард isCurrent. Busy-индикатор при этом гаснет.
+    if (!signal) return ctx.generateRaw({ prompt });
+    return Promise.race([
+        ctx.generateRaw({ prompt }),
+        new Promise((_, rej) => {
+            if (signal.aborted) rej(new DOMException('Aborted', 'AbortError'));
+            else signal.addEventListener('abort', () => rej(new DOMException('Aborted', 'AbortError')), { once: true });
+        }),
+    ]);
 }

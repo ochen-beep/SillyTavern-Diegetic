@@ -1,69 +1,56 @@
-// Неизменяемое ядро формата (порт идеи Glosses/src/prompt-contract.js):
-// ломать его = ломать src/parser.js. Шаблон — в templates/universal.md.
+// Неизменяемое машинное ядро формата: ломать его = ломать src/parser.js.
+// Стиль, язык и диегетичность живут в templates/*.md — контракт содержит только
+// то, что код реально парсит и валидирует. Промпты — только на английском.
 
-export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (контракт ответа)
+export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (response contract)
 
-Ты — дизайнер внутримировых объектов. Задача: по каждому посту создать диегетический
-артефакт — физический объект этой сцены. Артефакт ОБЯЗАТЕЛЕН: ты не решаешь, делать ли
-его, — ты делаешь и выбираешь только тип, носитель и содержание.
+For the post you receive, return exactly {{MAX_COUNT}} artifact(s). Making an artifact is MANDATORY:
+you do not decide whether to make one — you only choose the type, medium and content.
 
-**Стиль:** cinematic, tactile, gritty. Скевоморфизм, микровзаимодействия, профессиональная
-типографика. Никакого «чистого веб-дизайна»: бумажное зерно, сканлайны, glass blur,
-потёртые края, эпохальные шрифты (Google Fonts через @import) или системные. CSS-текстуры
-(шум, градиенты, тени). Артефакт должен выглядеть как предмет из реальности: iMessage —
-как iOS дословно, телеграмма — как бланк со штампами.
+**Response format (DO NOT DEVIATE)**
+Each artifact is exactly one pair:
+1) an HTML comment \`<!--DIEGETIC {"type":"<type>","anchor":"<verbatim short phrase from the post>"}-->\`
+2) immediately followed by a single \`\`\`html fenced block containing a full document with \`<body>...</body>\`.
+- "anchor" — a VERBATIM short phrase (2–6 words) copied from the post, next to which the artifact
+  is embedded into the scene. Do not paraphrase, do not alter punctuation. The phrase must occur once.
+- Triple backticks inside the fenced block are forbidden. Keep the artifact compact and self-contained;
+  external libraries only when the medium truly requires them; fonts via @import are always fine.
+- Height follows content: no min-height/height: 100vh (or 100svh/100dvh) on body or the scene —
+  the artifact is embedded in the post and does not need screen height.
+- Refusal is not allowed. An empty reply, "nothing comes to mind", "does not fit" — all contract
+  violations: pure dialogue is a chat on a screen, reflection is a note, a scene change is a signboard.
+  Every post has a suitable medium — find it and execute it.`;
 
-**Диегетичность:** артефакты триггерятся нарративом, а не украшают его. Не выбирай anchor
-в первом или последнем предложении поста. Не дублируй смысл поста — артефакт показывает
-то, что персонаж ВИДИТ НА ЭКРАНЕ/В РУКАХ.
-
-**Язык:** весь текст артефакта — на {{getvar::narlng}}.
-
-**Фотослот (необязательно, не более 1 на артефакт):** если носитель предполагает настоящую
-фотографию (поляроид, снимок в досье, селфи-вложение в переписке, фото к статье, заставка
-на экране телефона) — добавь в артефакт слот:
-\`<div class="photo" data-dg-img="trigger: описание" style="position:relative; …явные размеры (height или aspect-ratio)…">…CSS-плейсхолдер…</div>\`.
-- trigger — ровно один из: \`selfie\` (персонаж в кадре, вертикальный кадр), \`scene\`
-  (место/панорама/интерьер, горизонтальный кадр), \`img\` (предмет, документ, любое другое).
-- описание — конкретный визуальный промпт на английском: кто/что в кадре, ракурс, свет,
-  стиль. Без двойных кавычек внутри (ломают атрибут).
-- Внутри слота ВСЕГДА рисуй CSS-плейсхолдер (градиенты, силуэты, шум — как раньше): он виден,
-  пока фото генерируется, и остаётся навсегда, если генерация недоступна. Пустой слот — нарушение.
-- Настоящее фото подставится в слот автоматически — \`<img>\` сам не вставляй никуда.
-- Слот уместен только там, где фото существует diegetically: у поляроида, у экрана, у досье.
-  У записки, письма, гримуара, терминала фотослота нет.
-
-### Формат ответа (НАРУШАТЬ НЕЛЬЗЯ)
-- Верни не более {{MAX_COUNT}} артефакт(ов). Каждый — ровно одна пара:
-  1) HTML-комментарий \`<!--DIEGETIC {"type":"<тип>","anchor":"<дословная короткая фраза из поста>"}-->\`
-  2) сразу за ним один fenced-блок \`\`\`html, внутри — полноценный документ с \`<body>...\</body>\`.
-- "anchor" — ДОСЛОВНАЯ короткая фраза (2–6 слов) из поста, рядом с которой артефакт
-  встраивается в сцену. Не перефразируй, не меняй пунктуацию. Фраза должна встречаться один раз.
-- Внутри fenced-блока запрещены тройные обратные кавычки. Держи артефакт компактным:
-  без внешнего фона/рамок на body, без гигантских библиотек — inline CSS/JS только.
-- Отказ недопустим. Пустой ответ, «импульса нет», «не подходит» — нарушение контракта:
-  чистый диалог — это переписка на экране, рефлексия — записка, переход — вывеска.
-  Для каждого поста существует подходящий носитель — найди его и исполни.`;
+/** Сигнатура уже вставленного контракта: старые шаблоны с контрактом,
+ *  вписанным целиком, не должны получить его вторым экземпляром. */
+const CONTRACT_SIGNATURE = '### TOOL — DIEGETIC HTML';
 
 /**
  * Раздельная сборка: system = шаблон+контракт, user = контекст+пост.
  * Формат для ConnectionManagerRequestService.sendRequest (source 'profile');
  * assemblePrompt — это те же части, склеенные в одну строку для generateRaw.
+ * Идемпотентно: контракт вставляется ровно один раз — по {{CONTRACT}}, а если
+ * плейсхолдера нет и контракт уже вписан в шаблон текстом, повторно не дописывается.
  */
 export function assemblePromptParts({ templateText, postText, contextBlock = '', maxCount = 1 }) {
     maxCount = Math.max(1, Math.min(5, Number(maxCount) || 1));
     const template = String(templateText ?? '');
-    const withContract = template.includes('{{CONTRACT}}')
-        ? template.replaceAll('{{CONTRACT}}', DIEGETIC_CONTRACT)
-        : template.trim() + '\n\n' + DIEGETIC_CONTRACT;
+    let withContract;
+    if (template.includes('{{CONTRACT}}')) {
+        withContract = template.replaceAll('{{CONTRACT}}', DIEGETIC_CONTRACT);
+    } else if (template.includes(CONTRACT_SIGNATURE)) {
+        withContract = template; // контракт уже внутри — не дублируем
+    } else {
+        withContract = template.trim() + '\n\n' + DIEGETIC_CONTRACT;
+    }
     const filled = withContract.replace(/\{\{MAX_COUNT\}\}/gu, String(maxCount));
     const user = contextBlock
-        ? `Контекст предыдущих сообщений:\n${contextBlock}\n\nПост (создай по нему артефакт):\n${postText}`
-        : `Пост (создай по нему артефакт):\n${postText}`;
+        ? `Context of earlier messages:\n${contextBlock}\n\nPost (create an artifact for it):\n${postText}`
+        : `Post (create an artifact for it):\n${postText}`;
     return { system: filled.trim(), user };
 }
 
 export function assemblePrompt({ templateText, postText, contextBlock = '', maxCount = 1 }) {
     const { system, user } = assemblePromptParts({ templateText, postText, contextBlock, maxCount });
-    return `${system}\n\n### Источник анализа\n${user}`;
+    return `${system}\n\n### Post to analyze\n${user}`;
 }

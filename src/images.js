@@ -105,20 +105,21 @@ export function publicImageSrc(imagePath) {
     return p ? '/' + p : '';
 }
 
-function slotImgHtml(ordinal, imagePath, cardId) {
+function slotImgHtml(imagePath, cardId) {
     const src = escapeAttr(publicImageSrc(imagePath));
     const card = cardId ? ` ${SLOT_CARD_ATTR}="${escapeAttr(cardId)}"` : '';
     const img = `<img class="${SLOT_IMG_CLASS}"${card} src="${src}" alt="" `
         + 'style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:10;"/>';
-    const btn = `<span class="dg-slot-regen" data-ordinal="${ordinal}" title="Перегенерировать фото">⟳</span>`;
+    // Контролы (⟳/✎) в хранилище не живут — их рисует display-патч render.js
+    // (withSlotControls): сохранённый .html остаётся чистым артефактом.
     // Плейсхолдер отработал — прячем его слои (модели любят z-index:2 на декоре
     // плейсхолдера, которое иначе перекрывает фото с z-index:10... и z-index:1).
-    return img + btn + '<style>.css-placeholder{display:none!important}</style>';
+    return img + '<style>.css-placeholder{display:none!important}</style>';
 }
 
 /**
- * Вставить сгенерированное фото в слот: <img> + кнопка перегенерации первыми
- * детьми слота (поверх CSS-плейсхолдера), состояние → done.
+ * Вставить сгенерированное фото в слот: <img> первым ребёнком слота
+ * (поверх CSS-плейсхолдера), состояние → done.
  * Возвращает новый текст или null, если слота нет.
  */
 export function injectSlotImage(text, ordinal, imagePath, cardId = null) {
@@ -126,10 +127,36 @@ export function injectSlotImage(text, ordinal, imagePath, cardId = null) {
     if (!slot) return null;
     const s = String(text ?? '');
     return s.slice(0, slot.start) + withState(slot.tag, 'done')
-        + slotImgHtml(ordinal, imagePath, cardId) + s.slice(slot.end);
+        + slotImgHtml(imagePath, cardId) + s.slice(slot.end);
 }
 
 const SLOT_IMG_RE = /<img\b[^>]*\bdg-slot-img\b[^>]*>/;
+
+/** id карточки URIS заполненного слота (для removeCard при перегенерации). */
+export function slotCardId(text, ordinal) {
+    const slot = findSlot(text, ordinal);
+    if (!slot) return null;
+    const m = SLOT_IMG_RE.exec(String(text ?? '').slice(slot.end));
+    return m ? attrValue(m[0], SLOT_CARD_ATTR) : null;
+}
+
+/**
+ * Переписать промпт слота: data-dg-img="trigger: desc" (без trigger — голое desc).
+ * Пустое описание или отсутствующий слот → null. Состояние слота не трогаем:
+ * его ставит вызывающий (перегенерация → loading, отложенная — null).
+ */
+export function setSlotPrompt(text, ordinal, { trigger = null, desc } = {}) {
+    const slot = findSlot(text, ordinal);
+    if (!slot) return null;
+    // Атрибут парсится по "([^"]*)": кавычки/скобки/амперсанд в описании ломают его.
+    const cleanDesc = String(desc ?? '').replace(/["<>&]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 4000);
+    if (!cleanDesc) return null;
+    const tr = trigger ? String(trigger).trim().toLowerCase().replaceAll('ё', 'е') : '';
+    const value = tr ? `${tr}: ${cleanDesc}` : cleanDesc;
+    const tag = slot.tag.replace(new RegExp(`\\s${SLOT_ATTR}\\s*=\\s*"[^"]*"`, 'i'), ` ${SLOT_ATTR}="${value}"`);
+    const s = String(text ?? '');
+    return s.slice(0, slot.start) + tag + s.slice(slot.end);
+}
 
 /**
  * Заменить фото в уже заполненном слоте (перегенерация): src и data-dg-card у
@@ -161,9 +188,33 @@ export function getUrisBridge() {
     try { return globalThis.URIS ?? null; } catch { return null; }
 }
 
-/** Снимок доступности моста для панели. Никогда не бросает. */
-export async function urisStatus() {
-    const b = getUrisBridge();
+const BRIDGE_WAIT_MS = 3000;
+const BRIDGE_POLL_MS = 100;
+
+/** Дождаться публикации globalThis.URIS. Сам факт публикации у URIS тихий
+ *  (window-событие uris:bridge уходит только на ready и генерациях), а порядок
+ *  активации расширений не наш — панель монтируется раньше, чем URIS активируется. */
+function waitForBridge(waitMs, pollMs) {
+    return new Promise((resolve) => {
+        const deadline = Date.now() + waitMs;
+        const tick = () => {
+            if (getUrisBridge() || Date.now() >= deadline) resolve();
+            else setTimeout(tick, pollMs);
+        };
+        tick();
+    });
+}
+
+/**
+ * Снимок доступности моста для панели. Никогда не бросает. Если глобала ещё
+ * нет — до waitMs ждёт его появления, затем (если появился) читает getStatus.
+ */
+export async function urisStatus({ waitMs = BRIDGE_WAIT_MS, pollMs = BRIDGE_POLL_MS } = {}) {
+    let b = getUrisBridge();
+    if (!b && waitMs > 0) {
+        await waitForBridge(waitMs, pollMs);
+        b = getUrisBridge();
+    }
     if (!b) return { available: false, accepting: false, connection: null };
     try {
         await Promise.race([

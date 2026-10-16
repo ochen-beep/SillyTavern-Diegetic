@@ -8,18 +8,24 @@
 import { loadSettings, saveSettings } from './src/settings.js';
 import {
     getCtx, settingsStorage, getBuiltinTemplate, chatData, saveChatData,
-    setApiKey,
+    setApiKey, getApiKey,
 } from './src/core.js';
+import {
+    BUILTIN_TEMPLATES, isBuiltinTemplate, userTemplates, listTemplateNames,
+    templateContent, saveTemplate, saveTemplateAs, deleteTemplate,
+    selectTemplate, DEFAULT_TEMPLATE,
+} from './src/templates.js';
 import { getChat, getMessage, listCmProfiles, persistChat, generateText } from './src/host.js';
 import { createPipeline, isExcluded } from './src/pipeline.js';
 import { createGenerationCoordinator } from './src/coordinator.js';
 import { createInitializationController } from './src/lifecycle.js';
-import { mountPanel, unmountUi, collectRows } from './src/ui.js';
+import { mountPanel, unmountUi } from './src/ui.js';
 import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating } from './src/render.js';
 import { migrateCurrentChat } from './src/migrate.js';
-import { clearPayload, variantText, PAYLOAD_KEY } from './src/payload.js';
+import { variantText, PAYLOAD_KEY } from './src/payload.js';
 import { urisStatus } from './src/images.js';
 import { collectContext } from './src/context.js';
+import { classifyEndpoint, isOriginAllowed, addToAllowList } from './src/endpoint-policy.js';
 
 const log = (...a) => console.log('[Diegetic]', ...a);
 const warn = (...a) => console.warn('[Diegetic]', ...a);
@@ -33,22 +39,11 @@ let boundEvents = [];
 
 const save = () => { saveSettings(settingsStorage, settings); };
 
-// Одноразовый вынос ключей legacy-настроек (sourceConfig.key) в localforage.
-async function migrateApiKeys() {
-    for (const p of settings.profiles) {
-        const legacy = String(p?.sourceConfig?.key ?? '');
-        if (!legacy) continue;
-        await setApiKey(p.id, legacy);
-        p.sourceConfig.key = '';
-        p.sourceConfig.hasKey = true;
-    }
-    save();
-}
-
 async function getContextBlock(messageId, depth) {
     const ctx = getCtx();
     const chat = getChat();
-    const from = Math.max(0, Number(messageId) - depth);
+    // Форма DS-Comments: история чата — отдельный тумблер, глубина задаётся числом.
+    const from = settings.ctxHistory ? Math.max(0, Number(messageId) - depth) : Number(messageId);
     const to = Number(messageId) - 1;
     const lines = [];
     for (let i = from; i <= to; i++) {
@@ -105,79 +100,121 @@ async function init(isCancelled = () => false) {
         getContextBlock,
         get settings() { return settings; },
         coordinator,
+        // Дескриптор источника для хоста: единственный профиль «source»,
+        // собранный из настроек (форма DS-Comments, без списка профилей).
+        // extraBody примешивается к запросу и для CM, и для custom —
+        // например, отключение reasoning у провайдера.
+        getSourceProfile: () => ({
+            id: 'source',
+            name: 'Источник',
+            source: settings.source,
+            sourceConfig: settings.source === 'profile'
+                ? { ...settings.cmProfile, extraBody: settings.customExtraBody || '' }
+                : settings.source === 'custom'
+                    ? { ...settings.custom, extraBody: settings.customExtraBody || '' }
+                    : null,
+            httpAllowList: settings.httpAllowList,
+        }),
         notifyRender: (id) => { reconcileMessage(id); panelApi?.render(); },
-        // templateText '' у профиля → встроенный шаблон профиля (fetch, core.js)
-        resolveTemplate: async (p) => String(p?.templateText ?? '').trim() || await getBuiltinTemplate(p?.builtin),
+        // Шаблон резолвится по activeTemplate: встроенная основа — fetch, своя —
+        // из именованного хранилища настроек (форма DS-Comments).
+        resolveTemplate: async () => {
+            const name = settings.activeTemplate;
+            if (isBuiltinTemplate(name)) return getBuiltinTemplate(name);
+            return String(userTemplates(settings)[name] ?? '');
+        },
     });
     if (isCancelled()) return;
 
     // Ленивый перенос legacy-ключей из настроек в localforage — до первого UI.
-    migrateApiKeys().catch(() => {});
     getBuiltinTemplate().catch((e) => warn('шаблон:', e)); // прогрев кэша
 
     const $ = globalThis.jQuery ?? globalThis.$;
+    // Шаблонные мутации возвращают новый объект настроек — подменяем и пишем.
+    const mutateTemplates = (fn) => {
+        const next = fn(settings);
+        if (next) { settings = next; save(); return true; }
+        return false;
+    };
+    // Подтверждение опасного действия (plain-HTTP endpoint) — штатный попап ST.
+    async function confirmDanger(text) {
+        const ctx = getCtx();
+        try {
+            if (typeof ctx?.callGenericPopup === 'function') {
+                const res = await ctx.callGenericPopup(text, 'confirm');
+                return res === true || res === 1 || res?.result === true;
+            }
+        } catch { /* фолбэк ниже */ }
+        try { return globalThis.window?.confirm?.(text) === true; } catch { return false; }
+    }
     const panelDeps = {
         $,
         settings: () => settings,
         setEnabled: (v) => { settings.enabled = v; save(); },
-        setActiveProfile: (id) => { settings.activeProfile = id; save(); },
-        setTemplateText: (text) => {
-            const p = settings.profiles.find(x => x.id === settings.activeProfile) || settings.profiles[0];
-            if (p) p.templateText = String(text ?? '');
+        // ── Источник генерации (форма DS-Comments: сегментный выбор) ──
+        getSourceKind: () => settings.source,
+        setSourceKind: (kind) => {
+            settings.source = ['current', 'profile', 'custom'].includes(kind) ? kind : 'current';
             save();
         },
-        setBuiltin: (id) => {
-            const p = settings.profiles.find(x => x.id === settings.activeProfile) || settings.profiles[0];
-            if (p) p.builtin = id === 'universal-photo' ? 'universal-photo' : 'universal';
-            save();
-        },
-        addProfile: ({ name, source, apiurl, key, model, profileId, profileName }) => {
-            const id = `p${Date.now().toString(36)}`;
-            const src = source === 'custom' ? 'custom' : source === 'profile' ? 'profile' : 'current';
-            const hasKey = !!key;
-            settings.profiles.push({
-                id,
-                name: String(name ?? '').trim() || 'Профиль',
-                source: src,
-                sourceConfig: src === 'custom'
-                    ? { apiurl: String(apiurl ?? ''), key: '', hasKey, model: String(model ?? '') }
-                    : src === 'profile' ? { profileId: String(profileId ?? ''), profileName: String(profileName ?? '') } : null,
-                templateText: '',
-            });
-            if (hasKey) setApiKey(id, key).catch(() => {});
-            settings.activeProfile = id;
-            save(); // saveSettings прогоняет через normalizeSettings — форма записи канонизируется
-        },
-        setProfileSource: ({ source, apiurl, key, model, profileId, profileName }) => {
-            const p = settings.profiles.find(x => x.id === settings.activeProfile) || settings.profiles[0];
-            if (!p) return;
-            p.source = source === 'custom' ? 'custom' : source === 'profile' ? 'profile' : 'current';
-            if (p.source === 'custom') {
-                const keep = p.sourceConfig?.hasKey || !!p.sourceConfig?.key;
-                p.sourceConfig = { apiurl: String(apiurl ?? ''), key: '', hasKey: keep || !!key, model: String(model ?? '') };
-                if (key) { setApiKey(p.id, key).catch(() => {}); p.sourceConfig.hasKey = true; }
-            } else {
-                p.sourceConfig = p.source === 'profile'
-                    ? { profileId: String(profileId ?? ''), profileName: String(profileName ?? '') } : null;
-            }
-            save();
-        },
-        getBuiltinTemplate,
         listCmProfiles,
+        getCmProfile: () => settings.cmProfile,
+        setCmProfile: (profileId, profileName) => {
+            settings.cmProfile = { profileId: String(profileId ?? ''), profileName: String(profileName ?? '') };
+            save();
+        },
+        getCustom: () => ({ ...settings.custom, extraBody: settings.customExtraBody || '' }),
+        // Сохранить свой endpoint: политика (без userinfo, https/loopback, иначе
+        // подтверждение → allowlist). Возвращает { ok, error }.
+        applyCustom: async ({ apiurl, model }) => {
+            const ep = classifyEndpoint(apiurl);
+            if (!ep.ok) return { ok: false, error: ep.error };
+            if (ep.kind === 'insecure-http' && !isOriginAllowed(ep.origin, settings.httpAllowList)) {
+                const ok = await confirmDanger(
+                    `Разрешить незащищённый endpoint ${ep.origin}?\n\n` +
+                    'Plain-HTTP вне localhost передаёт ключ и тексты в открытом виде. ' +
+                    'Origin будет добавлен в список разрешённых (настройки расширения).');
+                if (!ok) return { ok: false, error: 'подтверждение не дано' };
+                settings.httpAllowList = addToAllowList(ep.origin, settings.httpAllowList);
+            }
+            settings.custom = { apiurl: String(apiurl ?? '').trim(), model: String(model ?? '').trim() };
+            save();
+            return { ok: true };
+        },
+        // Доп. параметры запроса (JSON-объект) — для CM и custom; сохраняется сразу.
+        setCustomExtraBody: (extraBody) => {
+            const extra = String(extraBody ?? '').trim();
+            if (extra) {
+                try {
+                    const v = JSON.parse(extra);
+                    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('должен быть JSON-объект');
+                } catch (e) { return { ok: false, error: `«Доп. параметры»: ${e.message}` }; }
+            }
+            settings.customExtraBody = extra;
+            save();
+            return { ok: true };
+        },
+        getCustomKey: () => getApiKey('source'),
+        setCustomKey: (key) => setApiKey('source', String(key ?? '')),
+        // ── Шаблоны (форма DS-Comments: встроенные под замком + именованные) ──
+        getActiveTemplate: () => settings.activeTemplate,
+        isBuiltinTemplate,
+        builtinTemplateList: () => BUILTIN_TEMPLATES,
+        listTemplates: () => listTemplateNames(settings),
+        loadTemplateContent: async (name) =>
+            isBuiltinTemplate(name) ? getBuiltinTemplate(name) : templateContent(settings, name),
+        selectTemplate: (name) => { mutateTemplates((s) => selectTemplate(s, name)); },
+        saveTemplate: (text) => { mutateTemplates((s) => saveTemplate(s, s.activeTemplate, text)); },
+        saveTemplateAs: (name, text) => mutateTemplates((s) => saveTemplateAs(s, name, text)),
+        resetTemplateToBuiltin: async () => {
+            const text = await getBuiltinTemplate(DEFAULT_TEMPLATE);
+            mutateTemplates((s) => saveTemplate(s, s.activeTemplate, text));
+        },
+        deleteActiveTemplate: () => { mutateTemplates((s) => deleteTemplate(s, s.activeTemplate)); },
         // Лаунчер и панельные кнопки идут через runBusy — busy-анимация на всех.
         runLatest: () => {
             const id = getLatestAssistantId();
-            if (id !== null) runBusy(id, { force: true });
-        },
-        runId: (id) => { if (Number.isFinite(id)) runBusy(id, { force: true }); },
-        listArtifacts: () => collectRows(getChat()),
-        regen: (msgId) => runBusy(msgId, { force: true }),
-        removeArtifacts: (msgId) => {
-            const msg = getMessage(msgId);
-            if (msg && clearPayload(msg, msg.swipe_id ?? 0)) {
-                persistChat();
-                reconcileMessage(msgId);
-            }
+            if (id !== null && !coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
         },
         getExclusions: () => String(chatData()?.exclusions ?? ''),
         setExclusions: (text) => {
@@ -193,6 +230,9 @@ async function init(isCancelled = () => false) {
             reconcile(); // пересмотр кнопок в постах
             panelApi?.render(); // лаунчер перерисовывает ui.js по готовности
         },
+        setMaxPerMessage: (v) => { settings.maxPerMessage = Number(v); save(); },
+        setCtxHistory: (v) => { settings.ctxHistory = !!v; save(); },
+        setContextDepth: (v) => { settings.contextDepth = Number(v); save(); },
         setCtxPersona: (v) => { settings.ctxPersona = v; save(); },
         setCtxCharacter: (v) => { settings.ctxCharacter = v; save(); },
         setCtxWorld: (v) => { settings.ctxWorld = v; save(); },
@@ -206,11 +246,22 @@ async function init(isCancelled = () => false) {
 
     initRender({
         settings: () => settings,
-        run: (id) => runBusy(id, { force: true }),
-        fillImageSlots: (id) => pipeline.fillImageSlots(id),
+        // Повторный ◆ на посте с идущей генерацией = отмена (без нового запуска).
+        run: (id) => {
+            if (!coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
+        },
+        // 📷 во время заливки фото = отмена заливки; во время генерации —
+        // как раньше: новый прогон затирает её.
+        fillImageSlots: (id) => {
+            if (!coordinator.abortKind(id, 'fill')) pipeline.fillImageSlots(id);
+        },
+        // ⏹ на слоте во время заливки — отмена той же заливки.
+        cancelFill: (id) => coordinator.abortKind(id, 'fill'),
         hasPending: (id) => pipeline.hasPendingPhotoSlots(id),
         regenSlot: (id, artifactId, ordinal, cardId) =>
             pipeline.fillImageSlots(id, { artifactId, onlyOrdinal: ordinal, removeCardId: cardId }),
+        editSlotPrompt: (id, artifactId, ordinal, opts) =>
+            pipeline.updateSlotPrompt(id, artifactId, ordinal, opts),
     });
 
     // Настройки редкие, но debounce хоста может не дожить до закрытия вкладки.
@@ -305,7 +356,7 @@ export async function onClean() {
             }
         }
         if (ctx?.chatMetadata?.dg) delete ctx.chatMetadata.dg;
-        const profileIds = (settings?.profiles ?? []).map(p => p.id);
+        const profileIds = ['source', ...(settings?.profiles ?? []).map(p => p.id)];
         if (ctx?.extensionSettings) delete ctx.extensionSettings.diegetic;
         ctx?.saveSettingsDebounced?.();
         ctx?.saveMetadataDebounced?.();

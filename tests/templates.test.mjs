@@ -14,11 +14,12 @@ test('в templates/ — ровно две встроенные основы', ()
   assert.deepEqual(files.sort(), ['universal-photo.md', 'universal.md']);
 });
 
-test('обе основы: {{CONTRACT}} ровно один раз, без отказных формулировок', () => {
+test('обе основы: {{CONTRACT}} ровно один раз, без отказных формулировок, на английском', () => {
   for (const [name, text] of [['universal', uni], ['universal-photo', photo]]) {
     assert.equal(text.split('{{CONTRACT}}').length - 1, 1, `${name}: маркер {{CONTRACT}} обязан быть ровно один`);
     assert.ok(!/pulse:?false|"pulse":\s*false/u.test(text), `${name}: без pulse:false`);
     assert.ok(!/не выдумывай|если импульса нет|you may skip|optional to skip/iu.test(text), `${name}: без отказных лазеек`);
+    assert.ok(!/\p{Script=Cyrillic}/u.test(text), `${name}: промпт — только английский`);
   }
 });
 
@@ -33,5 +34,5 @@ test('universal-photo: фото через data-dg-img слоты с тригг�
   for (const trigger of ['selfie', 'img', 'scene']) {
     assert.ok(photo.includes(`\`${trigger}\``), `нет триггера ${trigger}`);
   }
-  assert.ok(photo.includes('CSS-плейсхолдер'), 'плейсхолдер-фолбэк обязателен');
+  assert.ok(photo.includes('CSS placeholder'), 'плейсхолдер-фолбэк обязателен');
 });

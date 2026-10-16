@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     parseImageSlots, parseSlotValue, hasPendingSlots, setSlotState,
-    injectSlotImage, replaceSlotImage, publicImageSrc,
+    injectSlotImage, replaceSlotImage, publicImageSrc, urisStatus,
+    setSlotPrompt, slotCardId,
 } from '../src/images.js';
 
 const SLOT = '<div class="photo" data-dg-img="img: a cat on a windowsill" style="position:relative;height:120px"><b>ph</b></div>';
@@ -79,12 +80,12 @@ test('setSlotState: нет такого ordinal — текст как есть',
     assert.equal(setSlotState(html, 5, 'error'), html);
 });
 
-test('injectSlotImage: img и кнопка — первые дети слота, состояние done, src с ведущим слэшем', () => {
+test('injectSlotImage: img — первый ребёнок слота, состояние done, src с ведущим слэшем', () => {
     const out = injectSlotImage(`<body>${SLOT}</body>`, 0, 'user/images/URIS/cat.png', 'card-1');
     assert.ok(out);
     assert.match(out, /data-dg-img-state="done"/);
     assert.match(out, /<img class="dg-slot-img" data-dg-card="card-1" src="\/user\/images\/URIS\/cat\.png"/);
-    assert.match(out, /<span class="dg-slot-regen" data-ordinal="0"/);
+    assert.ok(!out.includes('dg-slot-regen'), 'контролы в хранилище не живут — их рисует display-патч render.js');
     // img вставлен сразу после открывающего тега — до плейсхолдера
     assert.ok(out.indexOf('dg-slot-img') < out.indexOf('<b>ph</b>'));
 });
@@ -93,7 +94,7 @@ test('injectSlotImage: нет слота → null', () => {
     assert.equal(injectSlotImage('<body></body>', 0, 'user/images/x.png'), null);
 });
 
-test('replaceSlotImage: меняет src и card, сохраняет плейсхолдер и кнопку', () => {
+test('replaceSlotImage: меняет src и card, сохраняет плейсхолдер', () => {
     const filled = injectSlotImage(`<body>${SLOT}</body>`, 0, 'user/images/URIS/old.png', 'card-old');
     const out = replaceSlotImage(filled, 0, 'user/images/URIS/new.png', 'card-new');
     assert.ok(out);
@@ -125,4 +126,81 @@ test('publicImageSrc: ведущий слэш, мусорные слэши сх�
     assert.equal(publicImageSrc('user/images/a.png'), '/user/images/a.png');
     assert.equal(publicImageSrc('//user/images/a.png'), '/user/images/a.png');
     assert.equal(publicImageSrc(''), '');
+});
+
+test('slotCardId: карточка заполненного слота, pending → null', () => {
+    const filled = injectSlotImage(`<body>${SLOT}</body>`, 0, 'user/images/a.png', 'card-1');
+    assert.equal(slotCardId(filled, 0), 'card-1');
+    assert.equal(slotCardId(`<body>${SLOT}</body>`, 0), null);
+    assert.equal(slotCardId('<body></body>', 0), null);
+});
+
+test('setSlotPrompt: переписывает значение, состояние слота не трогает', () => {
+    const html = `<body>${setSlotState(SLOT, 0, 'loading')}</body>`;
+    const out = setSlotPrompt(html, 0, { trigger: 'scene', desc: 'night city, rain' });
+    assert.ok(out.includes('data-dg-img="scene: night city, rain"'));
+    assert.ok(out.includes('data-dg-img-state="loading"'));
+    const [sl] = parseImageSlots(out);
+    assert.equal(sl.trigger, 'scene');
+    assert.equal(sl.desc, 'night city, rain');
+});
+
+test('setSlotPrompt: без триггера — голое описание; кавычки и скобки санитизируются', () => {
+    const out = setSlotPrompt(`<body>${SLOT}</body>`, 0, { trigger: null, desc: 'a "cat" <on> a & sill' });
+    const [sl] = parseImageSlots(out);
+    assert.equal(sl.trigger, null);
+    assert.equal(sl.desc, 'a cat on a sill');
+    assert.ok(!out.includes('"cat"'), 'кавычки из значения атрибута убраны');
+});
+
+test('setSlotPrompt: пустое описание или нет слота → null', () => {
+    assert.equal(setSlotPrompt(`<body>${SLOT}</body>`, 0, { desc: '   ' }), null);
+    assert.equal(setSlotPrompt('<body></body>', 0, { desc: 'x' }), null);
+});
+
+// ── Мост: urisStatus (панель монтируется раньше публикации globalThis.URIS) ──
+
+const fakeBridge = ({ ready = Promise.resolve(), accepting = true, connection = { label: 'test' } } = {}) => ({
+    ready,
+    getStatus: async () => ({ accepting, connection }),
+});
+
+test('urisStatus: моста нет и не появляется → not available, ожидание ограничено', async () => {
+    delete globalThis.URIS;
+    const st = await urisStatus({ waitMs: 40, pollMs: 10 });
+    assert.deepEqual(st, { available: false, accepting: false, connection: null });
+});
+
+test('urisStatus: глобал публикуется во время ожидания → available', async () => {
+    delete globalThis.URIS;
+    setTimeout(() => { globalThis.URIS = fakeBridge(); }, 40);
+    try {
+        const st = await urisStatus({ waitMs: 2000, pollMs: 15 });
+        assert.equal(st.available, true);
+        assert.equal(st.accepting, true);
+        assert.equal(st.connection.label, 'test');
+    } finally { delete globalThis.URIS; }
+});
+
+test('urisStatus: мост есть, ready отклонён → available, но не accepting', async () => {
+    const ready = Promise.reject(new Error('init failed'));
+    ready.catch(() => {});
+    globalThis.URIS = fakeBridge({ ready });
+    try {
+        assert.deepEqual(await urisStatus({ waitMs: 0 }),
+            { available: true, accepting: false, connection: null });
+    } finally { delete globalThis.URIS; }
+});
+
+test('urisStatus: ready висит → по таймауту available, но не accepting', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    globalThis.URIS = fakeBridge({ ready: new Promise(() => {}) });
+    try {
+        const p = urisStatus({ waitMs: 0 });
+        t.mock.timers.tick(3000);
+        assert.deepEqual(await p, { available: true, accepting: false, connection: null });
+    } finally {
+        delete globalThis.URIS;
+        t.mock.timers.reset();
+    }
 });

@@ -22,7 +22,10 @@ function makeDeps({ raw = RESP, isUser = false, message = PROSE, failGen = false
         generateText: async () => { if (failGen) throw new Error('api down'); return raw; },
         persistChat: () => { saved++; },
         notifyRender: () => { rendered++; },
-        settings: { ...DEFAULT_SETTINGS, profiles: DEFAULT_SETTINGS.profiles.map(p => ({ ...p })) },
+        // Автогенерация включена явно: дефолт настроек теперь — выключена.
+        settings: { ...DEFAULT_SETTINGS, enabled: true },
+        // Дескриптор источника хост собирает из настроек (форма DS-Comments).
+        getSourceProfile: () => ({ id: 'source', name: 'Источник', source: 'current', sourceConfig: null }),
         coordinator: createGenerationCoordinator(),
         notify: { ready: (n) => notifications.push(['ready', n]), error: (m) => notifications.push(['error', m]) },
         getContextBlock: () => '',
@@ -117,6 +120,22 @@ test('мусорный ответ при force: старый payload не тро
     assert.ok(notifications.some(([k]) => k === 'error'));
 });
 
+test('частичный отсев: валидная пара записана, битая — тостом, не молча', async () => {
+    const { deps, msg, notifications } = makeDeps();
+    deps.settings = { ...deps.settings, maxPerMessage: 3 };
+    deps.generateText = async () =>
+        `<!--DIEGETIC {"type":"phone","anchor":"взяла телефон"}-->\n\`\`\`html\n<body><p>ok</p></body>\n\`\`\`\n`
+        + `<!--DIEGETIC {"type": --\>\n\`\`\`html\n<body>broken</body>\n\`\`\``;
+    await createPipeline(deps).run(0);
+    const p = readVerifiedPayload(msg, 0);
+    assert.ok(p, 'валидный артефакт записан');
+    assert.equal(p.artifacts.length, 1);
+    assert.ok(
+        notifications.some(([k, m]) => k === 'error' && /отброшено 1/.test(String(m))),
+        'частичный отсев озвучен тостом',
+    );
+});
+
 test('abort mid-flight: устаревший прогон ничего не пишет', async () => {
     const { deps, msg } = makeDeps();
     let resolveGen;
@@ -151,19 +170,18 @@ test('isExcluded: подстрока без учёта регистра/кавы
 
 test('источник profile: generateText получает части system/user и профиль', async () => {
     const { deps, msg } = makeDeps();
-    deps.settings = {
-        ...deps.settings,
-        profiles: [{ id: 'cm1', name: 'CM', source: 'profile', sourceConfig: { profileId: 'prof-1', profileName: 'Грок' }, templateText: '' }],
-        activeProfile: 'cm1',
-    };
-    deps.resolveTemplate = async (p) => `ШАБЛОН[${p?.templateText ?? ''}]`;
+    deps.getSourceProfile = () => ({
+        id: 'source', name: 'Источник', source: 'profile',
+        sourceConfig: { profileId: 'prof-1', profileName: 'Грок' },
+    });
+    deps.resolveTemplate = async () => 'ШАБЛОН';
     let received = null;
     deps.generateText = async (args) => { received = args; return RESP; };
     await createPipeline(deps).run(0);
     assert.equal(received.profile.sourceConfig.profileId, 'prof-1');
-    assert.match(received.system, /ШАБЛОН\[\]/);
+    assert.match(received.system, /ШАБЛОН/);
     assert.match(received.system, /TOOL — DIEGETIC HTML/);
-    assert.match(received.user, /Пост \(создай по нему артефакт\)/);
+    assert.match(received.user, /Post \(create an artifact for it\)/);
     assert.equal(typeof received.signal?.aborted, 'boolean');
     assert.ok(readVerifiedPayload(msg, 0));
 });
@@ -174,4 +192,69 @@ test('прогон по чужому digest: запись в swipe-слот и �
     assert.ok(msg.swipe_info[0].extra.dg, 'каноничная копия в слоте варианта');
     assert.equal(msg.extra.dg, msg.swipe_info[0].extra.dg, 'зеркало показанного варианта');
     assert.equal(msg.extra.dg.contentDigest, contentDigest(PROSE));
+});
+
+const SLOT_ART = '<body><div class="photo" data-dg-img="img: old prompt" style="position:relative;height:100px"><b>ph</b></div></body>';
+const seedSlotPayload = (msg) => writePayload(msg, 0, stampPayload(msg, 0,
+    [{ id: 'd:0', type: 'photo', anchor: 'взяла телефон', status: 'ok', html: SLOT_ART, bytes: SLOT_ART.length, createdAt: 1, profileId: 'default' }]));
+
+test('updateSlotPrompt: промпт переписан, persist+render, без регенерации — просто запись', async () => {
+    const { deps, msg, stats } = makeDeps();
+    seedSlotPayload(msg);
+    await createPipeline(deps).updateSlotPrompt(0, 'd:0', 0, { trigger: 'scene', desc: 'rain over the pier', regenerate: false });
+    const out = readVerifiedPayload(msg, 0).artifacts[0].html;
+    assert.ok(out.includes('data-dg-img="scene: rain over the pier"'));
+    assert.ok(stats().saved >= 1 && stats().rendered >= 1);
+});
+
+test('updateSlotPrompt: regenerate=true идёт в URIS-мост и меняет фото', async () => {
+    const { deps, msg } = makeDeps();
+    seedSlotPayload(msg);
+    const calls = [];
+    globalThis.URIS = {
+        ready: Promise.resolve(),
+        generate: async (req) => { calls.push(req); return { imagePath: 'user/images/new.png', cardId: 'card-new' }; },
+        removeCard: async () => {},
+    };
+    try {
+        await createPipeline(deps).updateSlotPrompt(0, 'd:0', 0, { trigger: 'scene', desc: 'new scene', regenerate: true });
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].prompt, 'new scene');
+        assert.equal(calls[0].trigger, 'scene');
+        const out = readVerifiedPayload(msg, 0).artifacts[0].html;
+        assert.ok(out.includes('src="/user/images/new.png"'));
+        assert.ok(out.includes('data-dg-img-state="done"'));
+    } finally { delete globalThis.URIS; }
+});
+
+test('updateSlotPrompt: пустое описание — тост ошибки, payload не тронут', async () => {
+    const { deps, msg, notifications } = makeDeps();
+    seedSlotPayload(msg);
+    await createPipeline(deps).updateSlotPrompt(0, 'd:0', 0, { trigger: null, desc: '   ', regenerate: true });
+    assert.ok(notifications.some(([k]) => k === 'error'));
+    assert.ok(readVerifiedPayload(msg, 0).artifacts[0].html.includes('img: old prompt'));
+});
+
+test('fillImageSlots: аборт прогона (свайп/правка) отменяет генерацию и сбрасывает loading', async () => {
+    const { deps, msg } = makeDeps();
+    seedSlotPayload(msg);
+    let gotSignal = null;
+    globalThis.URIS = {
+        ready: Promise.resolve(),
+        generate: (req, opts) => {
+            gotSignal = opts.signal;
+            return new Promise((_, rej) => opts.signal.addEventListener('abort', () => rej(new DOMException('Aborted', 'AbortError'))));
+        },
+        removeCard: async () => {},
+    };
+    try {
+        const p = createPipeline(deps);
+        const fill = p.fillImageSlots(0);
+        await new Promise(r => setTimeout(r, 10)); // дать заливке дойти до generate
+        assert.ok(gotSignal, 'сигнал доходит до URIS-моста');
+        deps.coordinator.bumpMessageRevision(0); // свайп/правка поста
+        await fill;
+        assert.ok(gotSignal.aborted, 'мост получил аборт');
+        assert.ok(!readVerifiedPayload(msg, 0).artifacts[0].html.includes('data-dg-img-state'), 'слот сброшен из loading');
+    } finally { delete globalThis.URIS; }
 });

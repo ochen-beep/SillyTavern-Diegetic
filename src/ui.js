@@ -1,6 +1,8 @@
-// src/ui.js — настройки в разделе «Расширения» таверны (inline-drawer, форма
-// Glosses) + лаунчер кнопки генерации (QR-бар / плавающая, режим buttonMode).
-// Контролы — нативные классы ST (text_pole, menu_button): тема и вид бесплатно.
+// src/ui.js — настройки в разделе «Расширения» таверны (inline-drawer) +
+// лаунчер кнопки генерации (QR-бар / плавающая, режим buttonMode).
+// Панель: сдержанная типографика на переменных темы ST, одна колонка,
+// подписи над контролами, один primary на секцию. Шаблоны и контекст —
+// по форме DS-Comments (edit-on-place, тумблеры секций).
 // Делегированные обработчики — на document в namespace .diegetic и scoped к
 // #dg-ext: старый runner-скрипт рисует панель с теми же id — наши обработчики
 // не должны на него срабатывать.
@@ -26,30 +28,25 @@ export function collectRows(chat) {
 }
 
 const CSS = `
-#dg-ext { font-size: 13px; line-height: 1.45; }
-#dg-ext .dg-section { border-top: 1px dashed var(--SmartThemeBorderColor, rgba(255,255,255,.12));
-  padding: 10px 0 4px; margin-top: 6px; }
-#dg-ext .dg-title { font-weight: 600; font-size: 12.5px; margin: 0 0 7px; opacity: .85; }
-#dg-ext .dg-hint { opacity: .6; font-size: 12px; margin: 4px 0 0; }
-#dg-ext .dg-autoline { display: flex; align-items: center; gap: 8px;
-  color: var(--SmartThemeEmColor, #c9a86a); }
-#dg-ext .dg-genrow { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
-#dg-ext .dg-genrow input[type=number] { width: 76px; }
-#dg-ext .dg-srcgrid { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; }
-#dg-ext .dg-srcgrid label { opacity: .75; }
-#dg-ext details { margin-top: 4px; }
-#dg-ext summary { cursor: pointer; font-weight: 600; font-size: 12.5px; opacity: .85;
-  padding: 3px 0; list-style-position: inside; }
-#dg-ext details[open] summary { margin-bottom: 7px; }
-#dg-ext .dg-row { display: flex; gap: 6px; align-items: center; padding: 5px 0;
-  border-bottom: 1px dashed var(--SmartThemeBorderColor, rgba(255,255,255,.08)); }
-#dg-ext .dg-row:last-child { border-bottom: none; }
-#dg-ext .dg-type { font-weight: 600; }
-#dg-ext .dg-status { margin-left: auto; opacity: .7; font-size: 12px; }
-#dg-ext .dg-status.orphan { color: #ffb86b; opacity: 1; }
-#dg-ext .dg-status.fuzzy { color: #9ad1ff; opacity: 1; }
-#dg-ext .dg-status.stale { color: #ff8b8b; opacity: 1; }
-#dg-ext .dg-row .menu_button { padding: 2px 8px; }
+/* ── Панель настроек #dg-ext ─────────────────────────────────────────── */
+#dg-ext { font-size: 13px; line-height: 1.5; color: var(--SmartThemeBodyColor, #ddd); }
+#dg-ext .dg-body > .dg-section { border-top: 1px solid var(--black30a, rgba(128,128,128,.18));
+  padding: 14px 0 6px; margin: 0; }
+#dg-ext .dg-body > .dg-section:first-child { border-top: none; padding-top: 2px; }
+#dg-ext .dg-title { font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .07em; opacity: .65; margin: 0 0 10px; }
+#dg-ext .dg-hint { opacity: .55; font-size: 12px; margin: 8px 0 0; line-height: 1.45; }
+#dg-ext .dg-hint b { opacity: 1; font-weight: 600; }
+
+/* Строка настройки: подпись слева, контрол справа, ровные колонки */
+#dg-ext .dg-row { display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 4px 12px; padding: 7px 0; }
+#dg-ext .dg-row > label { cursor: pointer; }
+#dg-ext .dg-row .text_pole { width: auto; min-width: 190px; }
+#dg-ext .dg-row input[type=number].text_pole { min-width: 72px; text-align: right; }
+#dg-ext .dg-sub { grid-column: 1 / -1; padding-left: 42px; opacity: .55; font-size: 12px; }
+
+/* Свитч: мгновенное действие, состояние видно без сохранения */
 #dg-ext .dg-switch { position: relative; width: 34px; height: 19px; flex: none; cursor: pointer; }
 #dg-ext .dg-switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 #dg-ext .dg-switch i { position: absolute; inset: 0; border-radius: 19px; transition: background .15s;
@@ -59,21 +56,50 @@ const CSS = `
   border-radius: 50%; background: var(--SmartThemeBodyColor, #ddd); transition: left .15s; }
 #dg-ext .dg-switch input:checked + i { background: var(--SmartThemeEmColor, #c9a86a); }
 #dg-ext .dg-switch input:checked + i::after { left: 17px; background: var(--black300, #16161a); }
-#dg-ext .dg-empty { opacity: .6; font-style: italic; }
+#dg-ext .dg-switch input:focus-visible + i { outline: 2px solid var(--SmartThemeEmColor, #c9a86a); outline-offset: 2px; }
 
-/* Артефакты в посте: по центру, без швов и скроллбаров */
-.dg-shell { margin: 10px 0; position: relative; display: flex; justify-content: center; }
+/* Широкие контролы и кнопочные ряды */
+#dg-ext .dg-wide { width: 100%; }
+#dg-ext .dg-btnrow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+#dg-ext .dg-btnrow .menu_button { background: var(--black30, rgba(0,0,0,.25)); border-radius: 8px; }
+#dg-ext .dg-btn-primary { border: 1px solid var(--SmartThemeEmColor, #c9a86a);
+  color: var(--SmartThemeEmColor, #c9a86a); font-weight: 600; }
+#dg-ext .dg-btn-danger { color: #ff8b8b; }
+#dg-ext .menu_button:disabled { opacity: .4; cursor: not-allowed; }
+#dg-ext .menu_button:not(:disabled):hover { border-color: var(--SmartThemeEmColor, #c9a86a); }
+#dg-ext details { margin-top: 6px; }
+#dg-ext details > summary { cursor: pointer; padding: 7px 0; list-style-position: inside; }
+#dg-ext details[open] > summary { margin-bottom: 4px; }
+
+/* Сегментный выбор источника (форма DS-Comments) */
+#dg-ext .dg-seg { display: flex; gap: 3px; margin-bottom: 10px; padding: 3px;
+  background: var(--black30, rgba(0,0,0,.25));
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.15)); border-radius: 10px; }
+#dg-ext .dg-seg-btn { flex: 1; border: none; background: transparent; cursor: pointer;
+  color: var(--SmartThemeBodyColor, #ccc); opacity: .6; border-radius: 8px;
+  padding: 6px 8px; font-size: 12.5px; transition: background .15s, opacity .15s; }
+#dg-ext .dg-seg-btn:hover { opacity: 1; }
+#dg-ext .dg-seg-btn.dg-seg-active { background: var(--SmartThemeEmColor, #c9a86a);
+  color: var(--black300, #16161a); opacity: 1; font-weight: 600; }
+#dg-ext .dg-seg-btn:focus-visible { outline: 2px solid var(--SmartThemeEmColor, #c9a86a); outline-offset: 1px; }
+
+/* ── Артефакты в посте: по центру, без швов и скроллбаров ───────────── */
+.dg-shell { margin: 10px 0; position: relative; display: flex; flex-direction: column;
+  align-items: center; }
+.dg-shell.dg-chiprow { flex-direction: row; flex-wrap: wrap; }
 .dg-shell > iframe, .dg-shell > .dg-chiprow { width: 100%; }
+.dg-shell.dg-chiprow > .dg-chip, .dg-shell.dg-chiprow > .dg-chip-action { width: auto; }
 .dg-frame { border: 0; display: block; min-height: 80px; background: transparent;
   color-scheme: normal; }
 .dg-chiprow { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.dg-chiprow-attached { margin-top: 6px; }
 .dg-chip, .dg-chip-action { cursor: pointer; border-radius: 8px; padding: 6px 14px; font-size: 13px;
   border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.2));
   background: var(--black30, rgba(0,0,0,.25)); color: var(--SmartThemeBodyColor, #ddd); }
 .dg-chip { font-weight: 600; }
 .dg-chip:hover, .dg-chip-action:hover { border-color: var(--SmartThemeEmColor, #c9a86a); }
 
-/* Лайтбокс: иммерсивный — только затемнение и сам артефакт */
+/* ── Лайтбокс: иммерсивный — только затемнение и сам артефакт ──────── */
 .dg-popup { position: fixed; inset: 0; z-index: 2999; display: flex; align-items: center;
   justify-content: center; }
 .dg-popup-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
@@ -84,19 +110,23 @@ const CSS = `
   background: rgba(0,0,0,.55); color: #fff; border: 1px solid rgba(255,255,255,.3);
   border-radius: 50%; width: 34px; height: 34px; font-size: 16px; }
 
-/* Фотослоты (мост URIS): состояния живут на элементе с data-dg-img внутри артефакта */
-[data-dg-img-state="loading"]::after { content: ''; position: absolute; inset: 0; z-index: 2;
-  background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.16) 50%, transparent 70%);
-  background-size: 200% 100%; animation: dgShimmer 1.4s linear infinite; }
-@keyframes dgShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-[data-dg-img-state="error"] { outline: 1px dashed rgba(255,120,120,.55); outline-offset: -1px; }
-.dg-slot-regen { position: absolute; right: 6px; bottom: 6px; z-index: 3; width: 22px; height: 22px;
-  border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 13px; line-height: 21px;
-  text-align: center; cursor: pointer; opacity: 0; transition: opacity .15s;
-  border: 1px solid rgba(255,255,255,.3); user-select: none; }
-[data-dg-img]:hover .dg-slot-regen { opacity: 1; }
+/* ── Редактор промпта фотослота (рендерится в родительском документе) ──
+   Стили самих слотов/контролов живут внутри артефакта (render.js SLOT_CTL_CSS):
+   родительский CSS в sandbox-iframe не проникает. */
+.dg-editor-dialog { height: auto; width: min(520px, 92vw); display: block;
+  background: var(--SmartThemeBlurTintColor, rgba(20,20,24,.96));
+  border: 1px solid var(--SmartThemeBorderColor, #444); border-radius: 10px; padding: 14px 16px; }
+.dg-editor-dialog header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.dg-editor-dialog .dg-popup-close { position: static; }
+.dg-editor-row { display: block; margin-bottom: 10px; font-size: 13px; }
+.dg-editor-row select { width: 100%; margin-top: 4px; padding: 6px 8px; border-radius: 6px;
+  background: var(--SmartThemeInputBg, #1e1e22); color: inherit; border: 1px solid var(--SmartThemeBorderColor, #444); }
+.dg-editor-dialog textarea { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 6px;
+  background: var(--SmartThemeInputBg, #1e1e22); color: inherit; border: 1px solid var(--SmartThemeBorderColor, #444);
+  font: inherit; resize: vertical; }
+.dg-editor-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 
-/* Кнопки генерации: анимация занятости (пост/QR-бар/FAB) */
+/* ── Кнопки генерации: анимация занятости (пост/QR-бар/FAB) ─────────── */
 .dg-gen-btn.dg-busy i, .dg-launcher-btn.dg-busy i { animation: dgSpin 1s linear infinite; }
 .dg-launcher-btn.dg-busy { color: var(--SmartThemeEmColor, #c9a86a); }
 .dg-launcher-btn.dg-busy::after { content: ''; position: absolute; inset: 2px; border-radius: 50%;
@@ -118,7 +148,6 @@ const CSS = `
 // пользователь: всё это попадает в документ через .html() — только через esc.
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const SOURCE_LABELS = { current: 'Текущий API SillyTavern', profile: 'Профиль подключения (Connection Manager)', custom: 'Свой endpoint (OpenAI-совместимый)' };
 const DISPLAY_LABELS = { inline: 'Сразу в посте', expand: 'Кнопка → развернуть в посте', popup: 'Кнопка → во всплывающем окне' };
 const BUTTON_LABELS = { post: 'У каждого поста', bar: 'В квик-баре', floating: 'Плавающая' };
 
@@ -134,6 +163,9 @@ export function describeSource(p) {
 
 let _launcherObserver = null;
 let _onLauncherClick = null;
+let _launcherMode = null;
+/** window-слушатель событий моста URIS (вешается в mountPanel, живёт до unmountUi). */
+let _onUrisBridgeEvent = null;
 
 function getQuickReplyBar() {
     return document.querySelector('#send_form #qr--bar')
@@ -145,44 +177,74 @@ function getLauncherHost() {
     return qrBar ? (qrBar.querySelector('.qr--buttons') || qrBar) : null;
 }
 
-function ensureLauncher(mode, onClick) {
+function makeLauncherButton(id, cls) {
+    const b = document.createElement('div');
+    b.id = id;
+    b.className = cls;
+    b.title = 'Diegetic: сгенерировать артефакт для последнего поста';
+    b.innerHTML = '<i class="fa-solid fa-scroll"></i>';
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _onLauncherClick?.(); });
+    return b;
+}
+
+/** Создать/перецепить кнопку бара в текущий хост. false — хоста ещё нет. */
+function syncBarButton() {
+    const host = getLauncherHost();
+    if (!host) return false;
+    const btn = document.getElementById('dg-launcher-bar')
+        || makeLauncherButton('dg-launcher-bar', 'qr--button menu_button interactable dg-launcher-btn');
+    if (btn.parentElement !== host) host.appendChild(btn);
+    return true;
+}
+
+function disconnectLauncherObserver() {
+    if (_launcherObserver) { try { _launcherObserver.disconnect(); } catch { /* ок */ } _launcherObserver = null; }
+}
+
+/** Снять подписку на события моста URIS (disable/clean и повторный mount). */
+function disconnectUrisBridgeListener() {
+    if (!_onUrisBridgeEvent) return;
+    try {
+        window.removeEventListener('uris:bridge', _onUrisBridgeEvent);
+        window.removeEventListener('uris:bridge-destroyed', _onUrisBridgeEvent);
+    } catch { /* ок */ }
+    _onUrisBridgeEvent = null;
+}
+
+/** Сколько после «моста нет» не повторять ожидание его появления: молча глобал
+ *  опубликоваться не может (публикация тихая и происходит только при enable
+ *  URIS, а готовность ловится событием ready). */
+const URIS_ABSENT_GRACE_MS = 30_000;
+
+export function ensureLauncher(mode, onClick) {
     const barBtn = document.getElementById('dg-launcher-bar');
     const fab = document.getElementById('dg-launcher-fab');
+    _launcherMode = mode;
+    _onLauncherClick = onClick;
     if (mode !== 'bar' && mode !== 'floating') {
         barBtn?.remove();
         fab?.remove();
-        if (_launcherObserver) { try { _launcherObserver.disconnect(); } catch { /* ок */ } _launcherObserver = null; }
+        disconnectLauncherObserver();
         return;
     }
-    _onLauncherClick = onClick;
-    const makeBtn = (id, cls) => {
-        const b = document.createElement('div');
-        b.id = id;
-        b.className = cls;
-        b.title = 'Diegetic: сгенерировать артефакт для последнего поста';
-        b.innerHTML = '<i class="fa-solid fa-scroll"></i>';
-        b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _onLauncherClick?.(); });
-        return b;
-    };
     if (mode === 'bar') {
         fab?.remove();
-        const host = getLauncherHost();
-        if (!host) { barBtn?.remove(); return; }
-        const btn = document.getElementById('dg-launcher-bar') || makeBtn('dg-launcher-bar', 'qr--button menu_button interactable dg-launcher-btn');
-        if (btn.parentElement !== host) host.appendChild(btn);
-        // ST пересобирает #send_form при смене чата — перецепляем.
+        // К нашему init QR-бара ещё не существует (QR инициализируется позже),
+        // а при смене чата/настроек пересобирает контейнер — кнопка гибнет
+        // вместе с ним. Поэтому наблюдатель вешаем всегда: он создаст кнопку,
+        // когда хост появится, и пересоздаст её после пересборки.
+        const target = document.getElementById('send_form') || document.documentElement;
         if (!_launcherObserver) {
-            const target = document.getElementById('send_form') || document.documentElement;
             _launcherObserver = new MutationObserver(() => {
-                const h = getLauncherHost();
-                const b = document.getElementById('dg-launcher-bar');
-                if (h && b && b.parentElement !== h) h.appendChild(b);
+                if (_launcherMode === 'bar') syncBarButton();
             });
             _launcherObserver.observe(target, { childList: true, subtree: true });
         }
+        if (!syncBarButton()) barBtn?.remove();
     } else {
         barBtn?.remove();
-        if (!fab) document.body.appendChild(makeBtn('dg-launcher-fab', 'dg-launcher-btn interactable'));
+        disconnectLauncherObserver();
+        if (!fab) document.body.appendChild(makeLauncherButton('dg-launcher-fab', 'dg-launcher-btn interactable'));
     }
 }
 
@@ -212,7 +274,7 @@ export function mountPanel(deps) {
     style.textContent = CSS;
     doc.head.appendChild(style);
 
-    // Секция в «Расширения» — стандартный inline-drawer (форма Glosses).
+    // Секция в «Расширения» — стандартный inline-drawer.
     const container = doc.createElement('div');
     container.id = 'dg-ext';
     container.className = 'extension_block';
@@ -229,258 +291,377 @@ export function mountPanel(deps) {
     hostEl.appendChild(container);
     const panel = container.querySelector('.dg-body');
 
-    const sourceOpts = (sel) => ['current', 'profile', 'custom']
-        .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${SOURCE_LABELS[s]}</option>`).join('');
     const displayOpts = (sel) => ['inline', 'expand', 'popup']
         .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${DISPLAY_LABELS[s]}</option>`).join('');
     const buttonOpts = (sel) => ['post', 'bar', 'floating']
         .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${BUTTON_LABELS[s]}</option>`).join('');
 
     const render = () => {
-        // Шаблон — async (fetch встроенного файла основы профиля).
-        const st0 = deps.settings();
-        const active0 = st0.profiles.find(p => p.id === st0.activeProfile) || st0.profiles[0];
-        deps.getBuiltinTemplate(active0?.builtin).then((builtin) => {
-            const rows = deps.listArtifacts();
-            const items = rows.map(r => `
-          <div class="dg-row" data-msgid="${r.msgId}">
-            <span class="dg-type">${esc(r.type)}</span>
-            <span class="dg-hint">#${r.msgId}</span>
-            <span class="dg-status ${esc(r.status)}">${esc(r.status)}</span>
-            <button class="menu_button dg-regen" data-msgid="${r.msgId}" title="Перегенерировать">⟳</button>
-            <button class="menu_button dg-del" data-msgid="${r.msgId}" title="Удалить артефакты поста">✕</button>
-          </div>`).join('');
-            const st = deps.settings();
-            const profiles = st.profiles
-                .map(p => `<option value="${esc(p.id)}" ${p.id === st.activeProfile ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-            const active = st.profiles.find(p => p.id === st.activeProfile) || st.profiles[0];
-            const template = String(active?.templateText ?? '').trim() || builtin;
-            const cmProfiles = deps.listCmProfiles ? deps.listCmProfiles() : [];
-            const cmOptions = cmProfiles
-                .map(p => `<option value="${esc(p.id)}" ${active?.sourceConfig?.profileId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-            const src = active?.source || 'current';
-            const sc = active?.sourceConfig || {};
-            $(panel).html(`
-          <div class="dg-section" style="border-top:none; margin-top:0">
-            <div class="dg-autoline">
-              <span class="dg-switch"><input type="checkbox" id="dg-enabled" ${st.enabled ? 'checked' : ''}/><i></i></span>
-              <span id="dg-auto-label">${st.enabled ? 'автогенерация после каждого поста' : 'автогенерация выключена'}</span>
-            </div>
-            <div class="dg-srcgrid" style="margin-top:8px">
-              <label for="dg-display-mode">Показ</label>
-              <select id="dg-display-mode" class="text_pole">${displayOpts(st.displayMode)}</select>
-              <label for="dg-button-mode">Кнопка</label>
-              <select id="dg-button-mode" class="text_pole">${buttonOpts(st.buttonMode)}</select>
-            </div>
-            <p class="dg-hint">Показ: артефакт сразу в посте или чип-рядом, который открывает его
-              в посте либо во всплывающем окне. Кнопка: где живёт запуск генерации.</p>
-          </div>
-          <div class="dg-section">
-            <p class="dg-title">Шаблон артефактов</p>
-            <select id="dg-profile" class="text_pole">${profiles}</select>
-            <p class="dg-hint">${esc(describeSource(active))}</p>
-            <div style="margin-top:8px">
-              <button class="menu_button dg-btn-primary" id="dg-gen-latest">Сгенерировать для последнего поста</button>
-            </div>
-            <div class="dg-genrow">
-              <input id="dg-msgid" type="number" class="text_pole" placeholder="ID"/>
-              <button class="menu_button" id="dg-manual">Сгенерировать по ID</button>
-            </div>
-          </div>
-          <div class="dg-section">
-            <p class="dg-title">Артефакты чата</p>
-            <div id="dg-list">${items || '<span class="dg-empty">пока пусто — сгенерируй первый артефакт</span>'}</div>
-          </div>
-          <div class="dg-section">
-            <details>
-              <summary>Контекст генерации</summary>
-              <div class="dg-srcgrid" style="margin-top:4px">
-                <label for="dg-ctx-persona">Персона</label>
-                <input type="checkbox" id="dg-ctx-persona" class="checkbox" ${st.ctxPersona ? 'checked' : ''}/>
-                <label for="dg-ctx-character">Персонаж</label>
-                <input type="checkbox" id="dg-ctx-character" class="checkbox" ${st.ctxCharacter ? 'checked' : ''}/>
-                <label for="dg-ctx-world">Лорбуки</label>
-                <input type="checkbox" id="dg-ctx-world" class="checkbox" ${st.ctxWorld ? 'checked' : ''}/>
-              </div>
-              <p class="dg-hint">Канон для артефактов: персона {{user}}, карточка персонажа и
-                активированные записи World Info (dry-run, на правила самой таверны). Глубина
-                истории чата — ${st.contextDepth} сообщений.</p>
-            </details>
-          </div>
-          <div class="dg-section">
-            <details>
-              <summary>Фото через URIS</summary>
-              <p class="dg-hint" id="dg-uris-status">проверка моста…</p>
-              <div class="dg-srcgrid" style="margin-top:6px">
-                <label for="dg-img-mode">Режим</label>
-                <select id="dg-img-mode" class="text_pole">
-                  <option value="off" ${st.imageMode === 'off' ? 'selected' : ''}>выключено</option>
-                  <option value="button" ${st.imageMode === 'button' ? 'selected' : ''}>по кнопке 📷 на посте</option>
-                  <option value="auto" ${st.imageMode === 'auto' ? 'selected' : ''}>авто (платно, за каждый слот)</option>
-                </select>
-                <label for="dg-img-quality">Качество</label>
-                <select id="dg-img-quality" class="text_pole">
-                  <option value="low" ${st.imageQuality === 'low' ? 'selected' : ''}>low</option>
-                  <option value="medium" ${st.imageQuality === 'medium' ? 'selected' : ''}>medium</option>
-                  <option value="high" ${st.imageQuality === 'high' ? 'selected' : ''}>high</option>
-                </select>
-              </div>
-              <p class="dg-hint">Слоты в артефактах (<code>data-dg-img</code>) заполняются сгенерированными
-                фото из UR Image Studio: поляроиды, селфи, снимки к статьям. CSS-плейсхолдер остаётся фолбэком.</p>
-            </details>
-          </div>
-          <div class="dg-section">
-            <details>
-              <summary>Текст шаблона</summary>
-              <div class="dg-srcgrid" style="margin-bottom:6px">
-                <label for="dg-builtin">Основа</label>
-                <select id="dg-builtin" class="text_pole">
-                  <option value="universal" ${active?.builtin !== 'universal-photo' ? 'selected' : ''}>Универсальный</option>
-                  <option value="universal-photo" ${active?.builtin === 'universal-photo' ? 'selected' : ''}>Универсальный с фото</option>
-                </select>
-              </div>
-              <textarea id="dg-template" class="text_pole" rows="9">${esc(template)}</textarea>
-              <p class="dg-hint">пустое поле = выбранная встроенная основа</p>
-              <div class="dg-genrow">
-                <button class="menu_button" id="dg-save-template">Сохранить шаблон</button>
-                <button class="menu_button" id="dg-reset-template" title="Вернуть встроенный шаблон основы">Вернуть встроенный</button>
-              </div>
-            </details>
-          </div>
-          <div class="dg-section">
-            <details>
-              <summary>Источник генерации</summary>
-              <select id="dg-source" class="text_pole">${sourceOpts(src)}</select>
-              <div id="dg-src-profile" style="display:${src === 'profile' ? '' : 'none'}; margin-top:6px">
-                ${cmOptions
-                  ? `<select id="dg-cm-profile" class="text_pole">${cmOptions}</select>`
-                  : '<p class="dg-hint">Расширение connection-manager не найдено или в нём нет профилей.</p>'}
-              </div>
-              <div id="dg-src-custom" style="display:${src === 'custom' ? '' : 'none'}; margin-top:6px">
-                <div class="dg-srcgrid">
-                  <label for="dg-apiurl">URL</label><input id="dg-apiurl" type="text" class="text_pole" value="${esc(sc.apiurl || '')}" placeholder="https://…/v1"/>
-                  <label for="dg-key">Ключ</label><input id="dg-key" type="password" class="text_pole" value="" placeholder="${sc.hasKey ? 'сохранён — введи для замены' : 'sk-…'}"/>
-                  <label for="dg-model">Модель</label><input id="dg-model" type="text" class="text_pole" value="${esc(sc.model || '')}" placeholder="необязательно"/>
-                </div>
-              </div>
-              <div class="dg-genrow"><button class="menu_button" id="dg-save-source">Применить к профилю</button></div>
-              <p class="dg-hint">Ключ хранится в localforage браузера, а не в settings.json.</p>
-            </details>
-          </div>
-          <div class="dg-section">
-            <details>
-              <summary>Новый шаблон (профиль)</summary>
-              <input id="dg-newname" type="text" class="text_pole" placeholder="имя профиля" style="margin-bottom:6px"/>
-              <select id="dg-newsource" class="text_pole">${sourceOpts('current')}</select>
-              <div id="dg-new-cm" style="display:none; margin-top:6px">
-                ${cmOptions
-                  ? `<select id="dg-new-cm-profile" class="text_pole">${cmOptions}</select>`
-                  : '<p class="dg-hint">Connection Manager недоступен — выбери другой источник.</p>'}
-              </div>
-              <div id="dg-new-custom" style="display:none; margin-top:6px">
-                <div class="dg-srcgrid">
-                  <label for="dg-apiurl">URL</label><input id="dg-napiurl" type="text" class="text_pole" placeholder="https://…/v1"/>
-                  <label for="dg-nkey">Ключ</label><input id="dg-nkey" type="password" class="text_pole" placeholder="sk-…"/>
-                  <label for="dg-nmodel">Модель</label><input id="dg-nmodel" type="text" class="text_pole" placeholder="необязательно"/>
-                </div>
-              </div>
-              <div class="dg-genrow"><button class="menu_button" id="dg-add-profile">Добавить профиль</button></div>
-              <p class="dg-hint">Новый профиль получает встроенный универсальный шаблон — правится в «Текст шаблона».</p>
-            </details>
-          </div>
-          <div class="dg-section">
-            <details>
-              <summary>Исключения авторежима</summary>
-              <textarea id="dg-excl" class="text_pole" rows="3">${esc(deps.getExclusions())}</textarea>
-              <p class="dg-hint">фраза на строку — на постах с такой фразой авторежим молчит</p>
-              <div class="dg-genrow"><button class="menu_button" id="dg-save-excl">Сохранить исключения</button></div>
-            </details>
-          </div>`);
+        const st = deps.settings();
+        const cmProfiles = deps.listCmProfiles ? deps.listCmProfiles() : [];
+        const cmSel = deps.getCmProfile?.()?.profileId || '';
+        const cmOptions = cmProfiles
+            .map(p => `<option value="${esc(p.id)}" ${p.id === cmSel ? 'selected' : ''}>${esc(p.name)}</option>`)
+            .join('');
+
+        $(panel).html(`
+      <div class="dg-section">
+        <div class="dg-row">
+          <label for="dg-enabled"><b>Автогенерация</b> — артефакт после каждого поста
+            <div class="dg-hint">выключена — запуск кнопкой ◆ у поста или из квик-бара</div></label>
+          <span class="dg-switch"><input type="checkbox" id="dg-enabled" ${st.enabled ? 'checked' : ''}/><i></i></span>
+        </div>
+      </div>
+      <div class="dg-section">
+        <p class="dg-title">Показ и кнопка</p>
+        <div class="dg-row"><label for="dg-display-mode">Артефакт в посте</label>
+          <select id="dg-display-mode" class="text_pole">${displayOpts(st.displayMode)}</select></div>
+        <div class="dg-row"><label for="dg-button-mode">Кнопка генерации</label>
+          <select id="dg-button-mode" class="text_pole">${buttonOpts(st.buttonMode)}</select></div>
+        <p class="dg-hint">«Развернуть в посте»: клик по чипу раскрывает артефакт, меню
+          (свернуть / копировать / файл / удалить) остаётся под ним.</p>
+      </div>
+      <div class="dg-section">
+        <p class="dg-title">Шаблон</p>
+        <select id="dg-template-select" class="text_pole dg-wide"></select>
+        <textarea id="dg-template-text" class="text_pole dg-wide" rows="10" style="margin-top:8px" spellcheck="false"></textarea>
+        <div class="dg-btnrow">
+          <button class="menu_button dg-btn-primary" id="dg-tpl-save">Сохранить</button>
+          <button class="menu_button" id="dg-tpl-saveas">Сохранить как…</button>
+          <button class="menu_button" id="dg-tpl-reset">Вернуть встроенный</button>
+          <button class="menu_button dg-btn-danger" id="dg-tpl-del">Удалить</button>
+        </div>
+        <div class="dg-btnrow" id="dg-tpl-saveas-row" style="display:none">
+          <input id="dg-tpl-saveas-name" class="text_pole" style="flex:1" placeholder="имя нового шаблона"/>
+          <button class="menu_button dg-btn-primary" id="dg-tpl-saveas-ok">Сохранить</button>
+        </div>
+        <p class="dg-hint" id="dg-tpl-hint"></p>
+        <div class="dg-row" style="margin-top:8px">
+          <label for="dg-max-count">Артефактов на пост <span class="dg-hint">(в контракте — <code>&#123;&#123;MAX_COUNT&#125;&#125;</code>)</span></label>
+          <input id="dg-max-count" type="number" class="text_pole" min="1" max="5" value="${st.maxPerMessage}"/>
+        </div>
+      </div>
+      <div class="dg-section">
+        <p class="dg-title">Источник генерации</p>
+        <div class="dg-seg" role="group" aria-label="Источник генерации">
+          <button type="button" class="dg-seg-btn" data-src="current">Текущий API</button>
+          <button type="button" class="dg-seg-btn" data-src="profile">Профиль CM</button>
+          <button type="button" class="dg-seg-btn" data-src="custom">Свой endpoint</button>
+        </div>
+        <div id="dg-src-profile" hidden>
+          ${cmOptions
+            ? `<div class="dg-row"><label for="dg-cm-profile">Профиль подключения</label>
+               <select id="dg-cm-profile" class="text_pole">${cmOptions}</select></div>
+               <p class="dg-hint">Выбор сохраняется сразу.</p>`
+            : '<p class="dg-hint">Расширение connection-manager не найдено или в нём нет профилей.</p>'}
+        </div>
+        <div id="dg-src-custom" hidden>
+          <div class="dg-row"><label for="dg-apiurl">URL</label>
+            <input id="dg-apiurl" type="text" class="text_pole" value="${esc(deps.getCustom().apiurl)}" placeholder="https://…/v1"/></div>
+          <div class="dg-row"><label for="dg-model">Модель</label>
+            <input id="dg-model" type="text" class="text_pole" value="${esc(deps.getCustom().model)}" placeholder="необязательно"/></div>
+          <div class="dg-row"><label for="dg-key">Ключ</label>
+            <input id="dg-key" type="password" class="text_pole" value="" placeholder="sk-… (хранится в браузере)"/></div>
+          <div class="dg-btnrow"><button class="menu_button dg-btn-primary" id="dg-save-source">Применить</button></div>
+          <p class="dg-hint">https — свободно; plain-HTTP вне localhost спросит подтверждение
+            и попадёт в список разрешённых. Ключ живёт в localforage браузера, не в settings.json.</p>
+        </div>
+        <div class="dg-row"><label for="dg-extrabody">Доп. параметры запроса (JSON)</label>
+          <input id="dg-extrabody" type="text" class="text_pole" value="${esc(deps.getCustom().extraBody)}" placeholder='{"reasoning_effort":"none"}' style="min-width:230px"/></div>
+        <p class="dg-hint" id="dg-source-hint">${esc(describeSourceLite(deps))}</p>
+      </div>
+      <div class="dg-section">
+        <p class="dg-title">Контекст генерации</p>
+        <div class="dg-row">
+          <label for="dg-ctx-history">История чата</label>
+          <span style="display:flex; align-items:center; gap:8px">
+            <input id="dg-ctx-depth" type="number" class="text_pole" min="1" max="20" value="${st.contextDepth}" ${st.ctxHistory ? '' : 'disabled'} title="глубина, сообщений"/>
+            <span class="dg-switch"><input type="checkbox" id="dg-ctx-history" ${st.ctxHistory ? 'checked' : ''}/><i></i></span>
+          </span>
+        </div>
+        <div class="dg-row"><label for="dg-ctx-persona">Персона {{user}}</label>
+          <span class="dg-switch"><input type="checkbox" id="dg-ctx-persona" class="checkbox" ${st.ctxPersona ? 'checked' : ''}/><i></i></span></div>
+        <div class="dg-row"><label for="dg-ctx-character">Описание персонажа</label>
+          <span class="dg-switch"><input type="checkbox" id="dg-ctx-character" class="checkbox" ${st.ctxCharacter ? 'checked' : ''}/><i></i></span></div>
+        <div class="dg-row"><label for="dg-ctx-world">Лорбуки — активированные записи</label>
+          <span class="dg-switch"><input type="checkbox" id="dg-ctx-world" class="checkbox" ${st.ctxWorld ? 'checked' : ''}/><i></i></span></div>
+        <p class="dg-hint">Секции собираются в канон-блок промпа; скан лора — dry-run,
+          на правилах самой таверны (sticky/cooldown не трогаются).</p>
+      </div>
+      <div class="dg-section">
+        <details>
+          <summary><span class="dg-title" style="display:inline">Фото через URIS</span></summary>
+          <div class="dg-row"><label for="dg-img-mode">Режим</label>
+            <select id="dg-img-mode" class="text_pole">
+              <option value="off" ${st.imageMode === 'off' ? 'selected' : ''}>выключено</option>
+              <option value="button" ${st.imageMode === 'button' ? 'selected' : ''}>по кнопке 📷 на посте</option>
+              <option value="auto" ${st.imageMode === 'auto' ? 'selected' : ''}>авто (платно, за каждый слот)</option>
+            </select></div>
+          <div class="dg-row"><label for="dg-img-quality">Качество</label>
+            <select id="dg-img-quality" class="text_pole">
+              <option value="low" ${st.imageQuality === 'low' ? 'selected' : ''}>low</option>
+              <option value="medium" ${st.imageQuality === 'medium' ? 'selected' : ''}>medium</option>
+              <option value="high" ${st.imageQuality === 'high' ? 'selected' : ''}>high</option>
+            </select></div>
+          <p class="dg-hint" id="dg-uris-status">проверка моста…</p>
+          <p class="dg-hint">Слоты в артефактах (<code>data-dg-img</code>) заполняются фото из
+            UR Image Studio: поляроиды, селфи, снимки к статьям. CSS-плейсхолдер — фолбэк.</p>
+        </details>
+      </div>
+      <div class="dg-section">
+        <details>
+          <summary><span class="dg-title" style="display:inline">Исключения авторежима</span></summary>
+          <textarea id="dg-excl" class="text_pole dg-wide" rows="3">${esc(deps.getExclusions())}</textarea>
+          <div class="dg-btnrow"><button class="menu_button" id="dg-save-excl">Сохранить исключения</button></div>
+          <p class="dg-hint">фраза на строку — на постах с такой фразой авторежим молчит</p>
+        </details>
+      </div>`);
             refreshUrisStatus();
+            syncTemplateEditor();
+            syncSourceSection();
+            fillCustomKeyField();
             ensureLauncher(deps.settings().buttonMode, deps.runLatest);
-        }).catch(() => { /* шаблон не загрузился — перерисуем при следующем вызове */ });
+        };
+
+    // ── Источник: сегментный выбор (форма DS-Comments) ──
+    const describeSourceLite = () => {
+        const kind = deps.getSourceKind();
+        if (kind === 'profile') {
+            const cm = deps.getCmProfile?.();
+            return `Источник: профиль подключения${cm?.profileName ? ` «${cm.profileName}»` : ' — не выбран'}`;
+        }
+        if (kind === 'custom') {
+            const c = deps.getCustom();
+            return `Источник: свой endpoint${c.apiurl ? ` (${c.apiurl})` : ' — не настроен'}`;
+        }
+        return 'Источник: текущий API SillyTavern';
+    };
+    const syncSourceSection = () => {
+        const kind = deps.getSourceKind();
+        doc.querySelectorAll('#dg-ext .dg-seg-btn').forEach((b) => {
+            const on = b.dataset.src === kind;
+            b.classList.toggle('dg-seg-active', on);
+            b.setAttribute('aria-pressed', String(on));
+        });
+        const prof = doc.getElementById('dg-src-profile');
+        const cust = doc.getElementById('dg-src-custom');
+        if (prof) prof.hidden = kind !== 'profile';
+        if (cust) cust.hidden = kind !== 'custom';
+        const hint = doc.getElementById('dg-source-hint');
+        if (hint) hint.textContent = describeSourceLite();
+    };
+    const fillCustomKeyField = () => {
+        const el = doc.getElementById('dg-key');
+        if (!el || !deps.getCustomKey) return;
+        deps.getCustomKey().then((k) => { if (el.isConnected && !el.value) el.placeholder = k ? 'сохранён — введи для замены' : 'sk-… (хранится в браузере)'; }).catch(() => {});
     };
 
-    // Статус моста URIS — асинхронный: строка подменяется по готовности промиса.
-    const refreshUrisStatus = () => {
+    // ── Редактор шаблонов (форма DS-Comments: список + edit-on-place) ──
+    // Monotonic-request guard: быстрые переключения дают несколько async-
+    // загрузок; отставшая не должна перезаписать textarea.
+    let _tplReq = 0;
+    async function syncTemplateEditor() {
+        const req = ++_tplReq;
+        const st = deps.settings();
+        const select = doc.getElementById('dg-template-select');
+        const textarea = doc.getElementById('dg-template-text');
+        const hint = doc.getElementById('dg-tpl-hint');
+        const bSave = doc.getElementById('dg-tpl-save');
+        const bReset = doc.getElementById('dg-tpl-reset');
+        const bDel = doc.getElementById('dg-tpl-del');
+        if (!select) return;
+        const cur = deps.getActiveTemplate();
+        const builtin = deps.isBuiltinTemplate(cur);
+
+        select.innerHTML = '';
+        for (const [id, label] of Object.entries(deps.builtinTemplateList())) {
+            const o = doc.createElement('option');
+            o.value = id;
+            o.textContent = `${label} 🔒`;
+            select.appendChild(o);
+        }
+        for (const name of deps.listTemplates()) {
+            const o = doc.createElement('option');
+            o.value = esc(name);
+            o.textContent = name;
+            select.appendChild(o);
+        }
+        select.value = cur;
+        let dangling = false;
+        if (cur && !builtin && select.value !== cur) {
+            // Выбор есть, а текста нет (чищеный браузер / другой сервер): выбор
+            // молча не переписываем — DS syncPromptEditor.
+            dangling = true;
+            const missing = doc.createElement('option');
+            missing.value = cur;
+            missing.textContent = `${cur} · нет текста`;
+            select.appendChild(missing);
+            select.value = cur;
+        }
+        const content = dangling ? null : await deps.loadTemplateContent(cur);
+        if (req !== _tplReq) return;
+        if (textarea) {
+            textarea.value = dangling
+                ? `Шаблон «${cur}» пока недоступен. Выбор сохранён; текст появится, когда шаблон существует.`
+                : String(content ?? '');
+            textarea.disabled = dangling;
+        }
+        // Встроенные под замком: Save/Reset/Delete неактивны, путь — «Сохранить как…».
+        if (bSave) bSave.disabled = builtin || dangling;
+        if (bReset) bReset.disabled = builtin || dangling;
+        if (bDel) bDel.disabled = builtin || dangling;
+        if (hint) hint.textContent = builtin
+            ? 'встроенная основа — под замком; правится копией через «Сохранить как…»'
+            : dangling ? 'текст шаблона отсутствует в настройках сервера' : 'изменения применяются кнопкой «Сохранить»';
+    }
+
+    // Статус моста URIS — живой, не одноразовый снимок: панель монтируется
+    // раньше, чем URIS активируется (порядок загрузки расширений — не наш),
+    // а URIS включают/выключают на ходу. urisStatus сама дожидается публикации
+    // глобала; событие ready и открытие секции настроек дёргают перечитывание.
+    //
+    // Дешёвость по построению:
+    //  - ожидание глобала — чтение свойства не чаще 10 раз/с, максимум 3 с
+    //    и только пока моста нет (цикл самооканчивается);
+    //  - single-flight: триггеры, пришедшие пачкой (render + клик + ready),
+    //    схлопываются — выполняется один запрос, остальные просятся одним
+    //    повтором после его завершения (getStatus моста — async-чтение
+    //    хранилища подключений, пачками его дёргать не нужно);
+    //  - grace после «моста нет»: повторные триггеры не повторяют
+    //    трёхсекундное ожидание (см. URIS_ABSENT_GRACE_MS);
+    //  - режим фото «выключено» (imageMode off): мост не нужен — ожидание
+    //    не запускается вовсе, ответы мгновенные (по наличию глобала);
+    //    переключение режима в button/auto перечитывает статус с ожиданием.
+    let _urisBusy = false;
+    let _urisDirty = false;
+    let _urisAbsentAt = 0;
+    const refreshUrisStatus = (opts) => {
         if (!deps.urisStatus) return;
-        deps.urisStatus().then((st) => {
+        if (_urisBusy) { _urisDirty = true; return; }
+        _urisBusy = true;
+        const off = deps.settings?.().imageMode === 'off';
+        const effective = opts
+            ?? (off || Date.now() - _urisAbsentAt < URIS_ABSENT_GRACE_MS ? { waitMs: 0 } : undefined);
+        deps.urisStatus(effective).then((st) => {
+            _urisAbsentAt = st.available ? 0 : Date.now();
             const node = doc.getElementById('dg-uris-status');
-            if (!node) return;
-            node.textContent = !st.available
-                ? 'мост не найден — UR Image Studio не установлен или выключен'
-                : st.accepting
-                    ? `мост активен${st.connection ? `, подключение: ${st.connection.label}` : ' — но в чате не выбрано image-подключение'}`
-                    : 'мост найден, но URIS выключен или ещё инициализируется';
-        }).catch(() => {});
+            if (node) {
+                node.textContent = !st.available
+                    ? 'мост не найден — UR Image Studio не установлен или выключен'
+                    : st.accepting
+                        ? `мост активен${st.connection ? `, подключение: ${st.connection.label}` : ' — но в чате не выбрано image-подключение'}`
+                        : 'мост найден, но URIS выключен или ещё инициализируется';
+            }
+        }).catch(() => { /* urisStatus не бросает; на всякий случай не роняем панель */ }).finally(() => {
+            _urisBusy = false;
+            if (_urisDirty) { _urisDirty = false; refreshUrisStatus(); }
+        });
     };
+    // uris:bridge уходит в общее окно и на жизненный цикл генераций
+    // (generation:*, prompt:*, gallery:*) — статус от них не зависит,
+    // перечитываемся только на ready и на снос моста (disable).
+    disconnectUrisBridgeListener();
+    _onUrisBridgeEvent = (e) => {
+        if (e?.type === 'uris:bridge-destroyed') refreshUrisStatus({ waitMs: 0 });
+        else if (e?.detail?.type === 'ready') refreshUrisStatus();
+    };
+    window.addEventListener('uris:bridge', _onUrisBridgeEvent);
+    window.addEventListener('uris:bridge-destroyed', _onUrisBridgeEvent);
 
     // Делегированные обработчики — scoped к нашему drawer: панель старого
     // runner-скрипта использует те же id, наши хендлеры на неё не должны влиять.
     $(doc).off('.diegetic');
-    $(doc).on('change.diegetic', '#dg-ext #dg-enabled', (e) => {
-        deps.setEnabled(e.target.checked);
-        $('#dg-auto-label').text(e.target.checked ? 'автогенерация после каждого поста' : 'автогенерация выключена');
-    });
+    $(doc).on('change.diegetic', '#dg-ext #dg-enabled', (e) => { deps.setEnabled(e.target.checked); });
     $(doc).on('change.diegetic', '#dg-ext #dg-display-mode', (e) => { deps.setDisplayMode(String(e.target.value)); });
     $(doc).on('change.diegetic', '#dg-ext #dg-button-mode', (e) => { deps.setButtonMode(String(e.target.value)); });
-    $(doc).on('change.diegetic', '#dg-ext #dg-profile', (e) => { deps.setActiveProfile(e.target.value); render(); });
-    $(doc).on('click.diegetic', '#dg-ext #dg-gen-latest', () => { deps.runLatest?.(); });
-    $(doc).on('click.diegetic', '#dg-ext #dg-manual', () => {
-        const id = Number($('#dg-msgid').val());
-        if (Number.isFinite(id)) deps.runId?.(id);
+
+    // Шаблоны: локальная пересинхронизация редактора — полный render() закрыл бы
+    // details и сбросил бы прокрутку.
+    const tplResync = () => syncTemplateEditor();
+    $(doc).on('change.diegetic', '#dg-ext #dg-template-select', (e) => { deps.selectTemplate(String($(e.target).val())); tplResync(); });
+    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-save', () => {
+        const text = String($('#dg-template-text').val() ?? '');
+        deps.saveTemplate(text);
+        tplResync();
     });
-    $(doc).on('click.diegetic', '#dg-ext #dg-save-template', () => { deps.setTemplateText(String($('#dg-template').val())); });
-    $(doc).on('change.diegetic', '#dg-ext #dg-builtin', (e) => { deps.setBuiltin(String(e.target.value)); render(); });
-    $(doc).on('click.diegetic', '#dg-ext #dg-reset-template', () => { deps.setTemplateText(''); render(); });
-    $(doc).on('click.diegetic', '#dg-ext #dg-save-source', () => {
-        deps.setProfileSource({
-            source: String($('#dg-source').val()),
-            apiurl: String($('#dg-apiurl').val() || ''),
-            key: String($('#dg-key').val() || ''),
-            model: String($('#dg-model').val() || ''),
-            profileId: String($('#dg-cm-profile').val() || ''),
-            profileName: String($('#dg-cm-profile option:selected').text() || ''),
-        });
-        render();
+    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-saveas', function () {
+        $('#dg-tpl-saveas-row').toggle();
+        $('#dg-tpl-saveas-name').trigger('focus');
     });
-    $(doc).on('change.diegetic', '#dg-ext #dg-source', (e) => {
-        const v = String($(e.target).val());
-        $('#dg-src-profile').toggle(v === 'profile');
-        $('#dg-src-custom').toggle(v === 'custom');
-    });
-    $(doc).on('change.diegetic', '#dg-ext #dg-newsource', (e) => {
-        const v = String($(e.target).val());
-        $('#dg-new-cm').toggle(v === 'profile');
-        $('#dg-new-custom').toggle(v === 'custom');
-    });
-    $(doc).on('click.diegetic', '#dg-ext #dg-add-profile', () => {
-        const name = String($('#dg-newname').val() || '').trim();
+    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-saveas-ok', () => {
+        const name = String($('#dg-tpl-saveas-name').val() ?? '').trim();
         if (!name) return;
-        const source = String($('#dg-newsource').val());
-        if (source === 'profile' && !$('#dg-new-cm-profile').length) return;
-        deps.addProfile({
-            name,
-            source,
-            apiurl: String($('#dg-napiurl').val() || ''),
-            key: String($('#dg-nkey').val() || ''),
-            model: String($('#dg-nmodel').val() || ''),
-            profileId: String($('#dg-new-cm-profile').val() || ''),
-            profileName: String($('#dg-new-cm-profile option:selected').text() || ''),
-        });
-        $('#dg-newname').val(''); $('#dg-napiurl').val(''); $('#dg-nkey').val(''); $('#dg-nmodel').val('');
-        $('#dg-new-cm').hide(); $('#dg-new-custom').hide();
-        $('#dg-newsource').val('current');
-        render();
+        const text = String($('#dg-template-text').val() ?? '');
+        if (deps.saveTemplateAs(name, text)) {
+            $('#dg-tpl-saveas-row').hide();
+            $('#dg-tpl-saveas-name').val('');
+        }
+        tplResync();
     });
-    $(doc).on('click.diegetic', '#dg-ext #dg-regen', (e) => deps.regen(Number($(e.target).data('msgid'))));
-    $(doc).on('click.diegetic', '#dg-ext #dg-del', (e) => deps.removeArtifacts(Number($(e.target).data('msgid'))));
-    $(doc).on('click.diegetic', '#dg-ext #dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
-    $(doc).on('change.diegetic', '#dg-ext #dg-img-mode', (e) => deps.setImageMode?.(String(e.target.value)));
-    $(doc).on('change.diegetic', '#dg-ext #dg-img-quality', (e) => deps.setImageQuality?.(String(e.target.value)));
+    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-reset', async () => {
+        await deps.resetTemplateToBuiltin();
+        tplResync();
+    });
+    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-del', () => {
+        deps.deleteActiveTemplate();
+        tplResync();
+    });
+
+    // Источник: сегментный переключатель сохраняет сразу (DS), поля endpoint — по «Применить».
+    $(doc).on('click.diegetic', '#dg-ext .dg-seg-btn', (e) => {
+        deps.setSourceKind(String($(e.currentTarget).data('src')));
+        syncSourceSection();
+    });
+    $(doc).on('change.diegetic', '#dg-ext #dg-cm-profile', (e) => {
+        deps.setCmProfile(String($(e.target).val() || ''), String($(e.target).find('option:selected').text() || ''));
+        $('#dg-source-hint').text(describeSourceLite());
+    });
+    $(doc).on('change.diegetic', '#dg-ext #dg-key', function () {
+        const val = String($(this).val() || '');
+        deps.setCustomKey(val).then(() => {
+            $(this).val('');
+            $(this).attr('placeholder', val ? 'сохранён — введи для замены' : 'sk-… (хранится в браузере)');
+            globalThis.toastr?.success(val ? 'Diegetic: ключ сохранён' : 'Diegetic: ключ удалён');
+        }).catch(() => globalThis.toastr?.error('Diegetic: ключ не сохранился'));
+    });
+    $(doc).on('click.diegetic', '#dg-ext #dg-save-source', async () => {
+        const res = await deps.applyCustom?.({
+            apiurl: String($('#dg-apiurl').val() || ''),
+            model: String($('#dg-model').val() || ''),
+        });
+        if (!res) return;
+        if (res.ok) globalThis.toastr?.success('Diegetic: endpoint применён');
+        else globalThis.toastr?.error(`Diegetic: ${res.error}`);
+        $('#dg-source-hint').text(describeSourceLite());
+    });
+    $(doc).on('change.diegetic', '#dg-ext #dg-extrabody', function () {
+        const res = deps.setCustomExtraBody?.(String($(this).val() || ''));
+        if (res && !res.ok) globalThis.toastr?.error(`Diegetic: ${res.error}`);
+    });
+    $(doc).on('change.diegetic', '#dg-ext #dg-max-count', (e) => { deps.setMaxPerMessage?.(Number(e.target.value)); });
+
+    // Контекст (форма DS-Comments: каждая секция — тумблер, глубина при истории)
+    $(doc).on('change.diegetic', '#dg-ext #dg-ctx-history', (e) => {
+        deps.setCtxHistory?.(e.target.checked);
+        $('#dg-ctx-depth').prop('disabled', !e.target.checked);
+    });
+    $(doc).on('change.diegetic', '#dg-ext #dg-ctx-depth', (e) => { deps.setContextDepth?.(Number(e.target.value)); });
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-persona', (e) => deps.setCtxPersona?.(e.target.checked));
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-character', (e) => deps.setCtxCharacter?.(e.target.checked));
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-world', (e) => deps.setCtxWorld?.(e.target.checked));
+
+    // Фото и исключения
+    // Смена режима фото: 'off' → button/auto снова разрешает ожидание моста —
+    // статус перечитывается с ним (мост мог появиться, пока режим был off).
+    $(doc).on('change.diegetic', '#dg-ext #dg-img-mode', (e) => {
+        deps.setImageMode?.(String(e.target.value));
+        refreshUrisStatus();
+    });
+    $(doc).on('change.diegetic', '#dg-ext #dg-img-quality', (e) => deps.setImageQuality?.(String(e.target.value)));
+    $(doc).on('click.diegetic', '#dg-ext #dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
+    // Открытие drawer'а/секций — свежий статус моста (мог включить URIS, пока
+    // панель была закрыта; опрос дешёвый, глобал уже опубликован).
+    $(doc).on('click.diegetic', '#dg-ext .inline-drawer-toggle, #dg-ext summary', () => refreshUrisStatus());
 
     ensureLauncher(deps.settings().buttonMode, deps.runLatest);
     render();
@@ -491,7 +672,8 @@ export function mountPanel(deps) {
 export function unmountUi(deps) {
     const $ = deps?.$ ?? globalThis.jQuery ?? globalThis.$;
     try { $?.(document).off('.diegetic'); } catch { /* ок */ }
-    if (_launcherObserver) { try { _launcherObserver.disconnect(); } catch { /* ок */ } _launcherObserver = null; }
+    disconnectLauncherObserver();
+    disconnectUrisBridgeListener();
     for (const id of ['dg-style-native', 'dg-ext', 'dg-launcher-bar', 'dg-launcher-fab']) {
         document.getElementById(id)?.remove();
     }

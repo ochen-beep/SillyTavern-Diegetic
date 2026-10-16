@@ -112,3 +112,20 @@ test('сломанная мета с { по-прежнему даёт bad meta J
   assert.equal(r.artifacts.length, 0);
   assert.ok(r.errors.some(e => e.startsWith('bad meta JSON')));
 });
+
+test('битая пара не валит валидную перед собой (граница сегмента сохраняется)', () => {
+  const raw = `<!--DIEGETIC {"type":"phone","anchor":"взял телефон"}-->\n\`\`\`html\n<body><p>ok</p></body>\n\`\`\`\n`
+    + `<!--DIEGETIC {"type": --\>\n\`\`\`html\n<body>broken</body>\n\`\`\``;
+  const r = parseDiegeticResponse(raw, {});
+  assert.equal(r.artifacts.length, 1, 'валидный артефакт выжил');
+  assert.equal(r.artifacts[0].type, 'phone');
+  assert.ok(r.errors.some(e => e.startsWith('bad meta JSON')));
+});
+
+test('валидная пара после битой тоже парсится', () => {
+  const raw = `<!--DIEGETIC {"type": --\>\n\`\`\`html\n<body>broken</body>\n\`\`\`\n`
+    + `<!--DIEGETIC {"type":"note","anchor":"x"}-->\n\`\`\`html\n<body>2</body>\n\`\`\``;
+  const r = parseDiegeticResponse(raw, {});
+  assert.deepEqual(r.artifacts.map(a => a.type), ['note']);
+  assert.ok(r.errors.some(e => e.startsWith('bad meta JSON')));
+});

@@ -15,7 +15,9 @@ let body;
 function makeNode(id = '') {
     const n = {
         id, className: '', title: '', innerHTML: '', parentElement: null,
-        children: [], _click: null, _q: null,
+        children: [], _click: null, _q: null, style: {}, attrs: {},
+        setAttribute(k, v) { n.attrs[k] = String(v); },
+        getAttribute(k) { return n.attrs?.[k] ?? null; },
         appendChild(c) { c.parentElement = n; n.children.push(c); created.add(c); },
         remove() {
             if (n.parentElement) {
@@ -70,7 +72,7 @@ globalThis.MutationObserver = class {
     disconnect() { this.disconnected = true; }
 };
 
-const { ensureLauncher } = await import('../src/ui.js');
+const { ensureLauncher, clampFabPosition } = await import('../src/ui.js');
 
 const byId = (id) => globalThis.document.getElementById(id);
 const fire = (mo) => mo.cb([], () => {});
@@ -164,6 +166,48 @@ test('floating: FAB на body, кнопка бара снята, наблюда�
     assert.ok(byId('dg-launcher-fab'));
     assert.equal(byId('dg-launcher-fab').parentElement, body);
     assert.equal(mo.disconnected, true);
+});
+
+// ── FAB: позиция (restore из localStorage, клэмп) ──
+
+const storageStub = () => {
+    const store = new Map();
+    return {
+        getItem: (k) => store.get(k) ?? null,
+        setItem: (k, v) => store.set(k, String(v)),
+    };
+};
+
+test('floating: сохранённая позиция восстанавливается на mounts', () => {
+    resetDom();
+    globalThis.localStorage = storageStub();
+    try {
+        globalThis.localStorage.setItem('diegetic_fab_position', JSON.stringify({ left: 100, top: 200 }));
+        ensureLauncher('floating', () => {});
+        const fab = byId('dg-launcher-fab');
+        assert.equal(fab.style.left, '100px');
+        assert.equal(fab.style.top, '200px');
+        assert.equal(fab.style.right, 'auto');
+    } finally { delete globalThis.localStorage; }
+});
+
+test('floating: улетевшая сохранённая позиция → дефолтный угол (вьюпорт-фолбэк 1024×768)', () => {
+    resetDom();
+    globalThis.localStorage = storageStub();
+    try {
+        globalThis.localStorage.setItem('diegetic_fab_position', JSON.stringify({ left: 5000, top: 5000 }));
+        ensureLauncher('floating', () => {});
+        const fab = byId('dg-launcher-fab');
+        assert.equal(fab.style.left, '966px', '1024 − 38 − 20');
+        assert.equal(fab.style.top, '646px', '768 − 38 − 84');
+    } finally { delete globalThis.localStorage; }
+});
+
+test('clampFabPosition: клэмп в вьюпорт и под верхнюю панель ST', () => {
+    const vp = { width: 800, height: 600 };
+    assert.deepEqual(clampFabPosition({ left: -50, top: 9999 }, vp, 38), { left: 0, top: 562 });
+    const inset = clampFabPosition({ left: 10, top: 5 }, vp, 38, 60);
+    assert.equal(inset.top, 60, 'не выше top-бара');
 });
 
 test('post: обе кнопки сняты, вооружённый наблюдатель отключён', () => {

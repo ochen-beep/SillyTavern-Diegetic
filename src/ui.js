@@ -142,6 +142,7 @@ const CSS = `
   border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.2));
   box-shadow: 0 6px 18px rgba(0,0,0,.4); opacity: .85; }
 #dg-launcher-fab:hover { opacity: 1; }
+#dg-launcher-fab.dg-fab-dragging { opacity: 1; cursor: grabbing; }
 `;
 
 // type/status приходят из вывода модели, name/id — из настроек, исключения пишет
@@ -166,6 +167,138 @@ let _onLauncherClick = null;
 let _launcherMode = null;
 /** window-слушатель событий моста URIS (вешается в mountPanel, живёт до unmountUi). */
 let _onUrisBridgeEvent = null;
+let _fabResizeBound = false;
+
+// ── Плавающая кнопка: драг + запоминание позиции (форма DS-Comments FAB) ──
+// Pointer Events + setPointerCapture: мышь и тач одним кодом; порог 6px отделяет
+// клик от драга; позиция пишется в localStorage только на отпускании.
+
+const FAB_ID = 'dg-launcher-fab';
+const FAB_POSITION_KEY = 'diegetic_fab_position';
+const FAB_SIZE = 38;
+const DRAG_THRESHOLD_PX = 6;
+
+/** Чистая: дефолтный угол. На мобильных выше — низ съедают send_form/клавиатура. */
+export function defaultFabPosition(viewport, size, isMobile) {
+    const right = isMobile ? 16 : 20;
+    const bottom = isMobile ? 120 : 84;
+    return {
+        left: Math.max(0, viewport.width - size - right),
+        top: Math.max(0, viewport.height - size - bottom),
+    };
+}
+
+/** Чистая: клэмп в вьюпорт; topInset (верхняя панель ST) не даёт спрятаться под ней. */
+export function clampFabPosition(pos, viewport, size, topInset = 0) {
+    const left = Math.max(0, Math.min(pos.left, viewport.width - size));
+    const top = Math.max(0, Math.min(pos.top, viewport.height - size));
+    return topInset > 0 ? { left, top: Math.min(Math.max(top, topInset), viewport.height - size) } : { left, top };
+}
+
+/** Чистая: сохранённая позиция, если ещё целиком во вьюпорте, иначе дефолт. */
+export function computeRestoredFabPosition(saved, viewport, size, isMobile) {
+    if (saved
+        && Number.isFinite(saved.left) && Number.isFinite(saved.top)
+        && saved.left >= 0 && saved.top >= 0
+        && saved.left + size <= viewport.width
+        && saved.top + size <= viewport.height) {
+        return { left: saved.left, top: saved.top };
+    }
+    return defaultFabPosition(viewport, size, isMobile);
+}
+
+const fabViewport = () => ({
+    width: globalThis.window?.innerWidth ?? 1024,
+    height: globalThis.window?.innerHeight ?? 768,
+});
+const isMobileViewport = () => (globalThis.window?.innerWidth ?? 1024) < 768;
+
+// Верхняя панель ST рисуется поверх FAB (z-index выше) — клэмпим позицию под ней,
+// иначе кнопка, брошенная в верхнюю полосу, навсегда уезжает под бар.
+function stTopBarInset() {
+    const bar = globalThis.document?.getElementById?.('top-bar');
+    if (!bar?.getBoundingClientRect) return 0;
+    try {
+        const bottom = bar.getBoundingClientRect().bottom;
+        return Number.isFinite(bottom) && bottom > 0 ? Math.min(bottom, globalThis.window.innerHeight) : 0;
+    } catch { return 0; }
+}
+
+function readSavedFabPosition() {
+    try {
+        const raw = globalThis.localStorage?.getItem?.(FAB_POSITION_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+}
+
+function persistFabPosition(icon) {
+    try {
+        globalThis.localStorage?.setItem?.(FAB_POSITION_KEY, JSON.stringify({
+            left: parseFloat(icon.style.left),
+            top: parseFloat(icon.style.top),
+        }));
+    } catch { /* приватный режим — позиция просто не переживёт рестарт */ }
+}
+
+function placeFab(icon, pos) {
+    icon.style.left = `${pos.left}px`;
+    icon.style.top = `${pos.top}px`;
+    icon.style.right = 'auto';
+    icon.style.bottom = 'auto';
+}
+
+function restoreFabPosition(icon) {
+    placeFab(icon, clampFabPosition(
+        computeRestoredFabPosition(readSavedFabPosition(), fabViewport(), FAB_SIZE, isMobileViewport()),
+        fabViewport(), FAB_SIZE, stTopBarInset()));
+}
+
+function onFabResize() {
+    const icon = globalThis.document?.getElementById?.(FAB_ID);
+    const left = parseFloat(icon?.style?.left);
+    const top = parseFloat(icon?.style?.top);
+    if (!Number.isFinite(left) || !Number.isFinite(top)) return;
+    placeFab(icon, clampFabPosition({ left, top }, fabViewport(), FAB_SIZE, stTopBarInset()));
+}
+
+function makeFabDraggable(icon) {
+    let dragging = false;
+    let offsetX = 0, offsetY = 0, startX = 0, startY = 0;
+    icon.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        dragging = false;
+        const r = icon.getBoundingClientRect();
+        offsetX = e.clientX - r.left;
+        offsetY = e.clientY - r.top;
+        startX = r.left;
+        startY = r.top;
+        try { icon.setPointerCapture?.(e.pointerId); } catch { /* указатель уже отпущен */ }
+        e.preventDefault();
+    });
+    icon.addEventListener('pointermove', (e) => {
+        if (!icon.hasPointerCapture?.(e.pointerId)) return;
+        const rawX = e.clientX - offsetX;
+        const rawY = e.clientY - offsetY;
+        if (!dragging && Math.hypot(rawX - startX, rawY - startY) > DRAG_THRESHOLD_PX) {
+            dragging = true;
+            icon.classList.add('dg-fab-dragging');
+        }
+        placeFab(icon, clampFabPosition({ left: rawX, top: rawY }, fabViewport(), FAB_SIZE, stTopBarInset()));
+    });
+    icon.addEventListener('pointerup', (e) => {
+        if (icon.hasPointerCapture?.(e.pointerId)) icon.releasePointerCapture?.(e.pointerId);
+        const wasDragging = dragging;
+        dragging = false;
+        icon.classList.remove('dg-fab-dragging');
+        if (wasDragging) persistFabPosition(icon);
+        else _onLauncherClick?.(); // клик — здесь: отдельный click-слушатель дал бы двойной вызов
+    });
+    icon.addEventListener('pointercancel', () => {
+        dragging = false;
+        icon.classList.remove('dg-fab-dragging');
+    });
+    icon.style.touchAction = 'none'; // тач двигает кнопку, а не скроллит страницу
+}
 
 function getQuickReplyBar() {
     return document.querySelector('#send_form #qr--bar')
@@ -177,13 +310,25 @@ function getLauncherHost() {
     return qrBar ? (qrBar.querySelector('.qr--buttons') || qrBar) : null;
 }
 
-function makeLauncherButton(id, cls) {
+function makeLauncherButton(id, cls, { fab = false } = {}) {
     const b = document.createElement('div');
     b.id = id;
     b.className = cls;
-    b.title = 'Diegetic: сгенерировать артефакт для последнего поста';
+    b.title = fab
+        ? 'Diegetic: сгенерировать артефакт для последнего поста (перетаскивается)'
+        : 'Diegetic: сгенерировать артефакт для последнего поста';
     b.innerHTML = '<i class="fa-solid fa-scroll"></i>';
-    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _onLauncherClick?.(); });
+    if (fab) {
+        b.setAttribute('role', 'button');
+        b.tabIndex = 0;
+        b.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _onLauncherClick?.(); }
+        });
+        makeFabDraggable(b);
+        restoreFabPosition(b);
+    } else {
+        b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _onLauncherClick?.(); });
+    }
     return b;
 }
 
@@ -244,7 +389,12 @@ export function ensureLauncher(mode, onClick) {
     } else {
         barBtn?.remove();
         disconnectLauncherObserver();
-        if (!fab) document.body.appendChild(makeLauncherButton('dg-launcher-fab', 'dg-launcher-btn interactable'));
+        if (!fab) document.body.appendChild(makeLauncherButton('dg-launcher-fab', 'dg-launcher-btn interactable', { fab: true }));
+        // Вьюпорт сжался — вернуть кнопку внутрь (позиция в localStorage не трогается).
+        if (!_fabResizeBound && typeof window !== 'undefined') {
+            _fabResizeBound = true;
+            window.addEventListener('resize', onFabResize);
+        }
     }
 }
 
@@ -674,6 +824,10 @@ export function unmountUi(deps) {
     try { $?.(document).off('.diegetic'); } catch { /* ок */ }
     disconnectLauncherObserver();
     disconnectUrisBridgeListener();
+    if (_fabResizeBound) {
+        try { globalThis.window?.removeEventListener?.('resize', onFabResize); } catch { /* ок */ }
+        _fabResizeBound = false;
+    }
     for (const id of ['dg-style-native', 'dg-ext', 'dg-launcher-bar', 'dg-launcher-fab']) {
         document.getElementById(id)?.remove();
     }

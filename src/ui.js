@@ -160,8 +160,10 @@ const CSS = `
 }
 @keyframes dgSpin { to { transform: rotate(360deg); } }
 
-/* Лаунчер: QR-бар — как родная кнопка бара; плавающая — фиксированный угол */
+/* Лаунчер: QR-бар — как родная кнопка бара, но строго квадратная (fa-scroll
+   уже соседних иконок, без фикса кнопка выглядит кособокой) */
 .dg-launcher-btn { position: relative; cursor: pointer; }
+#dg-launcher-bar { justify-content: center; flex-shrink: 0; }
 #dg-launcher-fab { position: fixed; right: 20px; bottom: 84px; z-index: 2999; width: 38px; height: 38px;
   border-radius: 50%; display: flex; align-items: center; justify-content: center;
   background: var(--SmartThemeBlurTintColor, #1e1e22); color: var(--SmartThemeEmColor, #c9a86a);
@@ -382,6 +384,10 @@ function syncBarButton() {
     const btn = document.getElementById('dg-launcher-bar')
         || makeLauncherButton('dg-launcher-bar', 'qr--button menu_button interactable dg-launcher-btn');
     if (btn.parentElement !== host) host.appendChild(btn);
+    // Квадрат по фактической высоте бара: в flex-ряду aspect-ratio проигрывает
+    // content-ширине, а fa-scroll уже соседних иконок — кнопка выглядит кособоко.
+    const h = btn.offsetHeight;
+    if (h) btn.style.width = `${h}px`;
     return true;
 }
 

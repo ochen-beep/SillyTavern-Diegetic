@@ -112,8 +112,13 @@ const CSS = `
 .dg-chip:hover, .dg-chip-action:hover { border-color: var(--SmartThemeEmColor, #c9a86a); }
 
 /* ── Лайтбокс: иммерсивный — только затемнение и сам артефакт ──────── */
+/* Опорный пункт: НЕ полагаться на inset:0 для размеров. В некоторых
+   сборках хоста боксы html/body схлопываются (body fixed + transform-
+   обёртки других расширений), и fixed-оверлей с auto-высотой получает
+   0px — диалог уезжает центр-верх за экран. Явные lvw/lvh снимают
+   зависимость от бокса корня; vh-фолбэк для старых движков. */
 .dg-popup { position: fixed; inset: 0; z-index: 2999; display: flex; align-items: center;
-  justify-content: center; }
+  justify-content: center; width: 100vw; height: 100vh; width: 100lvw; height: 100lvh; }
 .dg-popup-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
 /* Колонка: шапка сверху во всю ширину, артефакт ниже. Без column iframe на
    100% ширины сплющивает header в узкую полоску сбоку. */
@@ -793,10 +798,18 @@ export function mountPanel(deps) {
         $('#dg-tpl-saveas-row').toggle();
         $('#dg-tpl-saveas-name').trigger('focus');
     });
-    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-saveas-ok', () => {
+    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-saveas-ok', async () => {
         const name = String($('#dg-tpl-saveas-name').val() ?? '').trim();
         if (!name) return;
         const text = String($('#dg-template-text').val() ?? '');
+        // Перезапись существующего пользовательского шаблона — под подтверждением:
+        // молчаливая замена необратимо теряла старый текст (Ф-10, найдено на
+        // живом стенде). «Сохранить» в редакторе не трогаем — там намеренная
+        // правка активного шаблона.
+        if (deps.listTemplates().includes(name) && deps.confirmDanger) {
+            const ok = await deps.confirmDanger(`Шаблон «${name}» уже есть. Перезаписать его текст новым?`);
+            if (!ok) return; // диалог «Сохранить как…» остаётся открытым
+        }
         if (deps.saveTemplateAs(name, text)) {
             $('#dg-tpl-saveas-row').hide();
             $('#dg-tpl-saveas-name').val('');

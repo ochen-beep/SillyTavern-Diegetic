@@ -1,8 +1,17 @@
+# Tooling / environment
 .zcode/
 node_modules/
+.vscode/
+.idea/
+
+# OS junk
 Thumbs.db
 desktop.ini
+.DS_Store
+
+# Logs & coverage
 *.log
+coverage/
 
 # Internal dev docs, not part of the distributed extension
 PROJECT_MAP.md

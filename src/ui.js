@@ -150,12 +150,14 @@ const CSS = `
   font: inherit; resize: vertical; }
 .dg-editor-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 
-/* ── Кнопки генерации: анимация занятости (пост/QR-бар/FAB) ─────────── */
-.dg-gen-btn.dg-busy i, .dg-launcher-btn.dg-busy i { animation: dgSpin 1s linear infinite; }
-.dg-launcher-btn.dg-busy { color: var(--SmartThemeEmColor, #c9a86a); }
-.dg-launcher-btn.dg-busy::after { content: ''; position: absolute; inset: 2px; border-radius: 50%;
-  border: 2px solid var(--SmartThemeEmColor, #c9a86a); border-top-color: transparent;
-  animation: dgSpin 0.9s linear infinite; }
+/* ── Кнопки генерации: анимация занятости ───────────────────────────── */
+/* Кнопка в посте — спиннер; лаунчеры (QR-бар/FAB) — медленный зелёный пульс. */
+.dg-gen-btn.dg-busy i { animation: dgSpin 1s linear infinite; }
+.dg-launcher-btn.dg-busy { animation: dgPulse 2.4s ease-in-out infinite; }
+@keyframes dgPulse {
+  0%, 100% { color: #5bbf6e; opacity: .7; filter: drop-shadow(0 0 2px rgba(95,191,110,.3)); }
+  50% { color: #9ff0ae; opacity: 1; filter: drop-shadow(0 0 9px rgba(120,230,140,.75)); }
+}
 @keyframes dgSpin { to { transform: rotate(360deg); } }
 
 /* Лаунчер: QR-бар — как родная кнопка бара; плавающая — фиксированный угол */

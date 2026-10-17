@@ -1,20 +1,23 @@
 // tests/ui-helpers.test.mjs
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { collectRows, esc } from '../src/ui.js';
 import { stampPayload, writePayload } from '../src/payload.js';
+import { _testSetEntries } from '../src/store.js';
 
 const TEXT = 'Она взяла телефон.\n\nДверь закрылась.';
 
+beforeEach(() => _testSetEntries({}));
+
 function chatWithArtifact() {
-    const msg = { mes: TEXT, swipes: [TEXT], swipe_id: 0, swipe_info: [{}], extra: {} };
+    const msg = { mes: TEXT, swipes: [TEXT], swipe_id: 0, swipe_info: [{ send_date: 'd0' }], extra: {}, send_date: 'd0' };
     writePayload(msg, 0, stampPayload(msg, 0, [
         { id: 'x:0', type: 'phone', anchor: 'взяла телефон', status: 'ok', html: '<body><p>phone</p></body>', bytes: 1, createdAt: 5, profileId: 'default' },
     ]));
     return [msg];
 }
 
-test('collectRows: артефакты из extra с индексом сообщения как msgId', () => {
+test('collectRows: артефакты из хранилища с индексом сообщения как msgId', () => {
     const rows = collectRows(chatWithArtifact());
     assert.equal(rows.length, 1);
     assert.equal(rows[0].type, 'phone');

@@ -1,17 +1,20 @@
 // tests/pipeline.test.mjs
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createPipeline, isExcluded } from '../src/pipeline.js';
 import { createGenerationCoordinator } from '../src/coordinator.js';
 import { DEFAULT_SETTINGS } from '../src/settings.js';
 import { contentDigest } from '../src/digest.js';
 import { readVerifiedPayload, readRawPayload, stampPayload, writePayload } from '../src/payload.js';
+import { _testSetEntries, readEntry } from '../src/store.js';
 
 const PROSE = 'Она молча взяла телефон и вышла из комнаты.\n\nДверь закрылась.';
 const RESP = `<!--DIEGETIC {"type":"phone","anchor":"взяла телефон"}-->\n\`\`\`html\n<body><p>phone</p></body>\n\`\`\``;
 
+beforeEach(() => _testSetEntries({}));
+
 function makeDeps({ raw = RESP, isUser = false, message = PROSE, failGen = false, seedPayload = false } = {}) {
-    const msg = { is_user: isUser, mes: message, swipes: [message], swipe_id: 0, swipe_info: [{}], extra: {} };
+    const msg = { is_user: isUser, mes: message, swipes: [message], swipe_id: 0, swipe_info: [{ send_date: 'd0' }], extra: {}, send_date: 'd0' };
     if (seedPayload) writePayload(msg, 0, stampPayload(msg, 0, [{ id: 'old:0', type: 'note', anchor: 'взяла телефон', status: 'ok', html: '<body>old</body>', bytes: 16, createdAt: 1, profileId: 'default' }]));
     const chat = [msg];
     const notifications = [];
@@ -34,7 +37,7 @@ function makeDeps({ raw = RESP, isUser = false, message = PROSE, failGen = false
     return { deps, msg, notifications, stats: () => ({ saved, rendered }) };
 }
 
-test('happy path: payload записан в extra, текст не тронут, persist+render', async () => {
+test('happy path: payload записан в store, текст не тронут, persist+render', async () => {
     const { deps, msg, notifications, stats } = makeDeps();
     await createPipeline(deps).run(0);
     assert.equal(msg.mes, PROSE, 'текст поста не меняется никогда');
@@ -71,28 +74,26 @@ test('payload уже есть: идемпотентный выход без ге
     assert.equal(called, false);
 });
 
-test('чужой payload в слоте (клон ST при свайпе): генерация НЕ блокируется', async () => {
-    // Хост при создании свайпа клонирует extra соседнего варианта в слот
-    // нового (script.js:3711): у нового варианта артефактов нет — прогон
-    // обязан генерировать, а не молча выходить (смотри Ф-1 ревью №2).
+test('свайп: у нового варианта своя send_date, чужих артефактов нет — генерация идёт', async () => {
+    // В файловом хранилище варианты адресуются send_date'ой: новый свайп
+    // получает новую дату от ST, запись соседнего варианта ему не видна —
+    // прогон обязан генерировать, а не молча выходить.
     const OTHER = 'Другой вариант текста поста.';
     const { deps, msg } = makeDeps();
     msg.swipes = [PROSE, OTHER];
-    msg.swipe_info = [{}, {}];
-    const stamped = stampPayload(msg, 1, [
+    msg.swipe_info = [{ send_date: 'd0' }, { send_date: 'd1' }];
+    writePayload(msg, 1, stampPayload(msg, 1, [
         { id: 'other:0', type: 'note', anchor: 'x', status: 'ok', html: '<b>other</b>', bytes: 11, createdAt: 1, profileId: 'default' },
-    ]);
-    writePayload(msg, 1, stamped);
-    // Точная эмуляция клона хоста в слот нового варианта + его зеркало.
-    msg.swipe_info[0] = { extra: structuredClone(msg.swipe_info[1].extra) };
-    msg.extra = structuredClone(msg.swipe_info[1].extra);
+    ]));
+    assert.equal(readRawPayload(msg, 0), null, 'у варианта 0 своих артефактов нет');
     let called = 0;
     deps.generateText = async () => { called++; return RESP; };
     await createPipeline(deps).run(0);
-    assert.equal(called, 1, 'клон чужого варианта не должен гасить автогенерацию');
+    assert.equal(called, 1, 'запись соседнего варианта не должна гасить автогенерацию');
     const p = readVerifiedPayload(msg, 0);
     assert.ok(p, 'для нового варианта записан свой payload');
     assert.ok(p.artifacts[0].html.includes('<p>phone</p>'));
+    assert.ok(readRawPayload(msg, 1), 'payload соседнего варианта цел');
 });
 
 test('API упал: тост с ошибкой, payload не записан', async () => {
@@ -210,12 +211,13 @@ test('источник profile: generateText получает части system/
     assert.ok(readVerifiedPayload(msg, 0));
 });
 
-test('прогон по чужому digest: запись в swipe-слот и зеркало', async () => {
+test('прогон по чужому digest: запись в store под send_date, сообщение чистое', async () => {
     const { deps, msg } = makeDeps();
     await createPipeline(deps).run(0);
-    assert.ok(msg.swipe_info[0].extra.dg, 'каноничная копия в слоте варианта');
-    assert.equal(msg.extra.dg, msg.swipe_info[0].extra.dg, 'зеркало показанного варианта');
-    assert.equal(msg.extra.dg.contentDigest, contentDigest(PROSE));
+    assert.ok(readEntry('d0'), 'запись в store под send_date варианта');
+    assert.equal(readEntry('d0').contentDigest, contentDigest(PROSE));
+    assert.equal(msg.swipe_info[0].extra?.dg, undefined, 'слот extra чист');
+    assert.equal(msg.extra?.dg, undefined, 'зеркала больше нет');
 });
 
 const SLOT_ART = '<body><div class="photo" data-dg-img="img: old prompt" style="position:relative;height:100px"><b>ph</b></div></body>';

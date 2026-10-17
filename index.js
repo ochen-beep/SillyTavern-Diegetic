@@ -22,6 +22,7 @@ import { createInitializationController } from './src/lifecycle.js';
 import { mountPanel, unmountUi, collectRows } from './src/ui.js';
 import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating, deleteArtifact, clearImageCache, openArtifactPopup, saveArtifactById } from './src/render.js';
 import { migrateCurrentChat } from './src/migrate.js';
+import { loadStore, migrateExtraToStore, gcStore, deleteStoreFile } from './src/store.js';
 import { variantText, PAYLOAD_KEY } from './src/payload.js';
 import { urisStatus } from './src/images.js';
 import { collectContext } from './src/context.js';
@@ -281,10 +282,19 @@ async function init(isCancelled = () => false) {
     bindEvents(ctx);
     if (isCancelled()) return;
 
-    // Текущий чат: миграция legacy-фенсов → reconcile.
-    migrateCurrentChat().then(() => reconcile()).catch((e) => warn('миграция:', e));
+    // Текущий чат: миграция legacy-фенсов → загрузка хранилища → перенос
+    // extra-эпохи в файл → reconcile.
+    prepareChat().catch((e) => warn('миграция:', e));
 
     log('готов');
+}
+
+/** Миграции + загрузка хранилища + reconcile. Общий путь init и CHAT_CHANGED. */
+async function prepareChat() {
+    await migrateCurrentChat();
+    await loadStore();
+    if (migrateExtraToStore()) await persistChat();
+    reconcile();
 }
 
 // Служебные MESSAGE_RECEIVED (script.js: emit(..., id, type)): слэш-команды,
@@ -315,10 +325,12 @@ function bindEvents(ctx) {
         [t.MESSAGE_RECEIVED, onMessageReceived],
         [t.MESSAGE_SWIPED, (id) => coordinator?.bumpMessageRevision(Number(id))],
         [t.MESSAGE_EDITED, (id) => coordinator?.bumpMessageRevision(Number(id))],
+        // Событие приходит ПОСЛЕ удаления (id = прошлый chat.length) — GC по чату.
+        [t.MESSAGE_DELETED, () => gcStore()],
         [t.CHAT_CHANGED, () => {
             coordinator?.invalidateAll();
             clearImageCache(); // кэш data:-URL фото привязан к чату — не тащим в новый
-            migrateCurrentChat().then(() => reconcile()).catch(() => {});
+            prepareChat().catch(() => {});
         }],
     ];
     // Дозагрузка истории длинных чатов — ресинк оболочек (есть не во всех хостах).
@@ -366,11 +378,12 @@ export async function onUpdate() {
 export async function onClean() {
     _runtime.stop();
     try { cleanup(); } catch (e) { warn('cleanup error:', e); }
-    // Стереть данные расширения: payload'ы из всех сообщений, chat-данные,
-    // настройки, ключи из localforage. Хук гоняется хостом с таймаутом —
-    // локальные стирания синхронны, сеть не трогаем.
+    // Стереть данные расширения: серверный файл артефактов чата, legacy
+    // payload'ы из сообщений (extra-эпоха), chat-данные, настройки, ключи.
+    // Хук гоняется хостом с таймаутом — сеть только одним быстрым delete.
     try {
         const ctx = getCtx();
+        await deleteStoreFile();
         for (const msg of ctx?.chat ?? []) {
             if (!msg || typeof msg !== 'object') continue;
             if (msg.extra && PAYLOAD_KEY in msg.extra) delete msg.extra[PAYLOAD_KEY];

@@ -1,20 +1,17 @@
-// src/payload.js — хранилище артефактов ВНУТРИ сообщения (форма: Glosses
-// src/domain/footnote-payload.js, урезанная под один массив артефактов).
-//
-//   swipe_info[swipe_id].extra.dg  — каноничная копия варианта (per-swipe)
-//   msg.extra.dg                   — live-зеркало показанного варианта
-//
-// Связку «какой вариант на экране» держит сам ST (syncMesToSwipe/syncSwipeToMes
-// переносят extra целиком), мы её не пересчитываем.
+// src/payload.js — адресация артефактов к варианту сообщения.
+// Хранилище — файловое (src/store.js), ключ = send_date свайпа. В сообщениях
+// артефакты не живут: файл чата не раздувается, клон extra при свайпе не может
+// подсунуть чужой payload, правка текста артефакт не теряет.
 //
 // ИНВАРИАНТ: payload используется, только когда его contentDigest совпадает с
-// дайджестом текущего текста варианта. Любое расхождение (унаследованный extra
-// на свежем свайпе, правка текста, восстановленный старый чат) читается как
-// «артефактов нет», а не как чужие артефакты. Сырой (без гейта) readRawPayload —
-// только для rebind-пути, которому устаревший payload нужен, чтобы его починить.
+// дайджестом текущего текста варианта. Расхождение (правка текста) читается
+// как «нет проверенных артефактов»; сырой readRawPayload — для rebind-пути,
+// который перепривязывает якоря к новому тексту и обновляет дайджест.
 
 import { contentDigest, isViableMessageText } from './digest.js';
+import { readEntry, writeEntry, deleteEntry } from './store.js';
 
+// Остался для миграции/clean: старое хранилище жило под этим ключом в extra.
 export const PAYLOAD_KEY = 'dg';
 export const PAYLOAD_SCHEMA = 1;
 
@@ -38,26 +35,26 @@ function isPayloadShape(value) {
         && Array.isArray(value.artifacts);
 }
 
-/**
- * Payload без digest-гейта — только для rebind/инспекции. Для сообщений без
- * свайп-механики (user-посты, экзотика) хранилище одно: msg.extra — фолбэк на
- * зеркало существует только для них: у свайповых сообщений зеркало отражает
- * ПОКАЗАННЫЙ вариант, и фолбэк на него подсунул бы чужой payload.
- */
-export function readRawPayload(msg, swipeIdx = 0) {
+/** Ключ варианта: send_date его swipe-слота; несвайповым — send_date сообщения. */
+function keyFor(msg, swipeIdx = 0) {
     if (!msg) return null;
     const idx = Number(swipeIdx) || 0;
-    const candidate = Array.isArray(msg.swipe_info)
-        ? msg.swipe_info[idx]?.extra?.[PAYLOAD_KEY] ?? null
-        : msg.extra?.[PAYLOAD_KEY] ?? null;
+    return msg.swipe_info?.[idx]?.send_date ?? msg.send_date ?? null;
+}
+
+/** Payload без digest-гейта — только для rebind/инспекции. */
+export function readRawPayload(msg, swipeIdx = 0) {
+    const key = keyFor(msg, swipeIdx);
+    if (!key) return null;
+    const candidate = readEntry(key);
     return isPayloadShape(candidate) ? candidate : null;
 }
 
 /**
  * true, если дайджест payload совпадает с текстом ДРУГОГО варианта этого же
- * сообщения: payload попал в слот через клонирование extra самим ST при создании
- * свайпа, а не через правку текста. Такой payload — чужой: его очищают, а не
- * перепривязывают.
+ * сообщения. В файловом хранилище «чужой payload» через клон extra не возникает;
+ * гард оставлен на экзотический случай «пользователь выровнял текст двух
+ * свайпов» — rebind тогда не должен молча переприсваивать чужую привязку.
  */
 export function payloadBelongsToOtherVariant(msg, swipeIdx, payload) {
     if (!msg || !isPayloadShape(payload)) return false;
@@ -80,15 +77,6 @@ export function readVerifiedPayload(msg, swipeIdx = 0) {
     return raw;
 }
 
-function ensureSlot(msg, swipeIdx) {
-    if (!Array.isArray(msg.swipe_info)) return null;
-    const idx = Number(swipeIdx) || 0;
-    if (!msg.swipe_info[idx] || typeof msg.swipe_info[idx] !== 'object') msg.swipe_info[idx] = {};
-    const slot = msg.swipe_info[idx];
-    if (!slot.extra || typeof slot.extra !== 'object') slot.extra = {};
-    return slot;
-}
-
 /** Собрать payload, проштампованный дайджестом ТЕКУЩЕГО текста варианта.
  *  null на заглушке стрима — payload на '...' не пишем никогда. */
 export function stampPayload(msg, swipeIdx, artifacts) {
@@ -103,37 +91,23 @@ export function stampPayload(msg, swipeIdx, artifacts) {
 }
 
 /**
- * Записать payload за вариант. Слот swipe_info пишется ВСЕГДА (адресован
- * вариантом), live-зеркало — только пока сообщение показывает этот вариант:
- * асинхронная генерация, пришедшая после свайпа пользователя, не должна
- * загрязнить свежепоказанный вариант. Дайджест уже должен совпадать с текстом
- * (stampPayload / rebind-проверенный payload) — функция только раскладывает.
+ * Записать payload за вариант. Адресован send_date'ой варианта: асинхронная
+ * генерация, пришедшая после свайпа пользователя, пишется в слот СВОЕГО
+ * варианта и показанный не загрязняет. Дайджест уже должен совпадать с текстом
+ * (stampPayload / rebind-проверенный payload).
  */
 export function writePayload(msg, swipeIdx, payload) {
     if (!msg || !isPayloadShape(payload)) return null;
-    const idx = Number(swipeIdx) || 0;
-    const slot = ensureSlot(msg, idx);
-    if (slot) slot.extra[PAYLOAD_KEY] = payload;
-    if ((msg.swipe_id ?? 0) === idx) {
-        if (!msg.extra || typeof msg.extra !== 'object') msg.extra = {};
-        msg.extra[PAYLOAD_KEY] = payload;
-    }
+    const key = keyFor(msg, swipeIdx);
+    if (!key) return null;
+    writeEntry(key, payload);
     return payload;
 }
 
-/** Удалить payload варианта (и зеркало, если оно его отражает). */
+/** Удалить payload варианта. */
 export function clearPayload(msg, swipeIdx = 0) {
-    if (!msg) return false;
-    const idx = Number(swipeIdx) || 0;
-    let removed = false;
-    const slot = Array.isArray(msg.swipe_info) ? msg.swipe_info[idx] : null;
-    if (slot?.extra && PAYLOAD_KEY in slot.extra) {
-        delete slot.extra[PAYLOAD_KEY];
-        removed = true;
-    }
-    if ((msg.swipe_id ?? 0) === idx && msg.extra && PAYLOAD_KEY in msg.extra) {
-        delete msg.extra[PAYLOAD_KEY];
-        removed = true;
-    }
-    return removed;
+    const key = keyFor(msg, swipeIdx);
+    if (!key || !readEntry(key)) return false;
+    deleteEntry(key);
+    return true;
 }

@@ -24,9 +24,9 @@ test('обе основы: {{CONTRACT}} ровно один раз, без от�
 });
 
 test('universal: скевоморфизм, обязательная интерактивность, русский текст', () => {
-  assert.match(uni, /Skeuomorphic/u);
-  assert.match(uni, /Mandatory: ≥1 meaningful stateful/u);
-  assert.match(uni, /must be in Russian/u);
+  assert.match(uni, /skeuomorphic/iu);
+  assert.match(uni, /Mandatory: ≥1 stateful/u);
+  assert.match(uni, /Russian for all in-universe text/u);
 });
 
 test('universal-photo: фото через data-dg-img слоты с триггерами', () => {
@@ -34,5 +34,5 @@ test('universal-photo: фото через data-dg-img слоты с тригг�
   for (const trigger of ['selfie', 'img', 'scene']) {
     assert.ok(photo.includes(`\`${trigger}\``), `нет триггера ${trigger}`);
   }
-  assert.ok(photo.includes('CSS-only placeholder'), 'плейсхолдер-фолбэк обязателен');
+  assert.ok(photo.includes('CSS placeholder'), 'плейсхолдер-фолбэк обязателен');
 });

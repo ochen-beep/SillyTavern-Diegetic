@@ -34,7 +34,18 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 // 100vh-ловушка на body раздувает iframe и после сворачивания артефакта внутри
 // себя высота не сжимается обратно — внизу висит чёрная пустота.
 const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}</style>';
-const RESIZE_SNIPPET = '<script>(function(){var p=function(){try{parent.postMessage({__dgH:document.documentElement.scrollHeight},"*")}catch(e){}};if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}addEventListener("load",p);p()})()</' + 'script>';
+// Рантайм-высота меряется по body, а не по documentElement.scrollHeight:
+// у корневого скроллера scrollHeight не опускается ниже вьюпорта фрейма,
+// поэтому после роста (раскрытие «слоя») iframe никогда не сжимался обратно —
+// замкнутый круг «высота фрейма = вьюпорт ≥ scrollHeight». Плюс MutationObserver
+// срезает рантайм-правки min-height:100vh (та же ловушка, что чинит
+// normalizeIntrinsicHeight, но уже после монтажа).
+const RESIZE_SNIPPET = '<script>(function(){var m=function(){var b=document.body;return b?Math.max(b.getBoundingClientRect().height,b.scrollHeight):document.documentElement.scrollHeight};'
+    + 'var p=function(){try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
+    + 'var fix=function(){document.querySelectorAll("[style*=vh]").forEach(function(el){var s=el.getAttribute("style");var t=String(s).replace(/(min-height|max-height|height)\\s*:\\s*100(?:s|l|d)?vh/gi,"$1:auto");if(t!==s)el.setAttribute("style",t)})};'
+    + 'if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}'
+    + 'if(typeof MutationObserver!=="undefined"){new MutationObserver(function(){fix();p()}).observe(document.documentElement,{attributes:true,attributeFilter:["style"],subtree:true})}'
+    + 'addEventListener("load",p);fix();p()})()</' + 'script>';
 // Клики внутри sandbox-iframe (opaque origin) до родительского document не доходят —
 // команды контролов (✎/⟳) уходят postMessage'ом, по образцу рукопожатия высоты.
 // Capture + stopPropagation: клик по контролу не должен будить JS самого артефакта.
@@ -281,11 +292,10 @@ function buildShell(artifact, key, msgId) {
     warmImages(html).then(() => {
         if (frame.isConnected) mountFrameHtml(frame, frameHtml());
     });
-    // Expand-режим: меню живёт вместе с развёрнутым артефактом — свернуть /
-    // скопировать / сохранить / удалить, а не исчезать после раскрытия.
-    if ((_deps?.settings?.().displayMode ?? 'inline') === 'expand') {
-        shell.appendChild(buildActionRow({ collapse: true }));
-    }
+    // Меню живёт вместе с показанным артефактом в любом режиме — скопировать /
+    // сохранить / удалить; «Свернуть» добавляется только в expand-режиме.
+    const mode = _deps?.settings?.().displayMode ?? 'inline';
+    shell.appendChild(buildActionRow({ collapse: mode === 'expand' }));
     return shell;
 }
 
@@ -318,9 +328,13 @@ async function copyText(text) {
 
 /** Сохранить артефакт как standalone .html (Blob + a[download], без сервера):
  *  файл открывается двойным кликом в любом браузере — артефакт и есть
- *  полноценный документ по контракту. */
-function saveArtifactFile(artifact) {
-    const blob = new Blob([String(artifact.html)], { type: 'text/html;charset=utf-8' });
+ *  полноценный документ по контракту. Сгенерированные фото (/user/images)
+ *  встраиваются data:-URL'ами: вне таверны по пути хоста они бы не открылись. */
+async function saveArtifactFile(artifact) {
+    const raw = String(artifact.html);
+    await warmImages(raw); // промах кэша — src остаётся путём, файл всё равно сохраняем
+    const html = withCachedImages(raw);
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -351,6 +365,20 @@ export function deleteArtifact(msgId, artifactId) {
 function closePopup() {
     _popup?.el.remove();
     _popup = null;
+}
+
+/** Панельная библиотека (ui.js): открыть артефакт в лайтбоксе по msgId + id. */
+export function openArtifactPopup(msgId, artifactId) {
+    const a = artifactByKey(msgId, artifactId);
+    if (a) openPopup(a, Number(msgId));
+}
+
+/** Панельная библиотека (ui.js): сохранить артефакт файлом по msgId + id. */
+export async function saveArtifactById(msgId, artifactId) {
+    const a = artifactByKey(msgId, artifactId);
+    if (!a) return;
+    await saveArtifactFile(a);
+    globalThis.toastr?.success('Diegetic: файл сохранён — открой его в браузере');
 }
 
 function openPopup(artifact, msgId = null) {
@@ -654,7 +682,10 @@ function onDocumentClick(e) {
         }
         if (e.target.closest('[data-dg-save]')) {
             const a = artifactByKey(msgId, key);
-            if (a) { saveArtifactFile(a); globalThis.toastr?.success('Diegetic: файл сохранён — открой его в браузере'); }
+            if (a) saveArtifactFile(a).then(
+                () => globalThis.toastr?.success('Diegetic: файл сохранён — открой его в браузере'),
+                () => globalThis.toastr?.error('Diegetic: файл не сохранился'),
+            );
             return;
         }
         if (e.target.closest('[data-dg-collapse]')) {

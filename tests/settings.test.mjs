@@ -14,13 +14,14 @@ test('normalizeSettings: валидный ввод сохраняется, му�
   assert.equal(d.maxPerMessage, DEFAULT_SETTINGS.maxPerMessage);
   assert.equal(d.contextDepth, DEFAULT_SETTINGS.contextDepth);
   assert.equal(d.appearance, DEFAULT_SETTINGS.appearance);
-  assert.equal(d.source, 'current');
+  assert.equal(d.source, 'profile');
 });
 
-test('источник по умолчанию — current, мусорные поля отбрасываются', () => {
+test('источник по умолчанию — profile; legacy "current" мигрирует в profile', () => {
   const s = normalizeSettings({});
-  assert.equal(s.source, 'current');
-  assert.deepEqual(s.cmProfile, null);
+  assert.equal(s.source, 'profile');
+  assert.equal(normalizeSettings({ source: 'current' }).source, 'profile');
+  assert.deepEqual(s.cmProfile, { profileId: '', profileName: '' }, 'профильный источник — пустая заготовка, не null');
   assert.deepEqual(s.custom, { apiurl: '', model: '' });
   assert.deepEqual(s.httpAllowList, []);
   assert.equal(s.customExtraBody, '');

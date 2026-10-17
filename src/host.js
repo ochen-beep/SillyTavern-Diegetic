@@ -122,26 +122,14 @@ async function generateViaCustom({ system, user, profile, signal }) {
 
 /**
  * Единая точка генерации. system/user — уже собранные части контракта;
- * макросы подставляются здесь для всех источников. «current» склеивает части
- * в один prompt для ctx.generateRaw (та же склейка, что делал assemblePrompt).
+ * макросы подставляются здесь для всех источников. Источники: профиль
+ * Connection Manager или свой endpoint; «текущий API» хоста не используется.
  */
 export async function generateText({ system, user, profile, signal }) {
     const ctx = getCtx();
     if (!ctx) throw new Error('контекст ST недоступен');
     const sys = subst(ctx, system);
     const usr = subst(ctx, user);
-    if (profile?.source === 'profile') return generateViaCm({ system: sys, user: usr, profile, signal });
     if (profile?.source === 'custom') return generateViaCustom({ system: sys, user: usr, profile, signal });
-    const prompt = `${sys}\n\n### Post to analyze\n${usr}`;
-    // generateRaw не принимает signal (его AbortController внутренний): мягкий
-    // аборт — ожидание разматывается сразу, запрос догорает в фоне, а его
-    // результат выбрасывает commit-гард isCurrent. Busy-индикатор при этом гаснет.
-    if (!signal) return ctx.generateRaw({ prompt });
-    return Promise.race([
-        ctx.generateRaw({ prompt }),
-        new Promise((_, rej) => {
-            if (signal.aborted) rej(new DOMException('Aborted', 'AbortError'));
-            else signal.addEventListener('abort', () => rej(new DOMException('Aborted', 'AbortError')), { once: true });
-        }),
-    ]);
+    return generateViaCm({ system: sys, user: usr, profile, signal });
 }

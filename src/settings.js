@@ -18,7 +18,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     templates: {},             // именованные шаблоны { name: text } — сервер-синк (форма DS-Comments)
     activeTemplate: DEFAULT_TEMPLATE,
     // Источник генерации (форма DS-Comments): один выбор, без списка профилей.
-    source: 'current',         // 'current' | 'profile' | 'custom'
+    source: 'profile',         // 'profile' | 'custom' ('current' выпилен — мигрирует в 'profile')
     cmProfile: null,           // { profileId, profileName } — профиль Connection Manager
     custom: { apiurl: '', model: '' }, // свой endpoint; ключ — в localforage, не здесь
     customExtraBody: '',       // JSON-примесь в тело запроса (напр., отключение reasoning)
@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 });
 
 const APPEARANCES = new Set(['silent', 'toast']);
-const SOURCES = new Set(['current', 'custom', 'profile']);
+const SOURCES = new Set(['custom', 'profile']);
 const IMAGE_MODES = new Set(['off', 'button', 'auto']);
 const IMAGE_QUALITIES = new Set(['low', 'medium', 'high']);
 const DISPLAY_MODES = new Set(['inline', 'expand', 'popup']);
@@ -69,7 +69,7 @@ const legacySourceFromProfiles = (raw) => {
     if (!p || typeof p !== 'object') return null;
     const sc = (p.sourceConfig && typeof p.sourceConfig === 'object') ? p.sourceConfig : {};
     return {
-        source: SOURCES.has(p.source) ? p.source : 'current',
+        source: SOURCES.has(p.source) ? p.source : DEFAULT_SETTINGS.source,
         cmProfile: p.source === 'profile'
             ? { profileId: String(sc.profileId ?? ''), profileName: String(sc.profileName ?? '') }
             : null,

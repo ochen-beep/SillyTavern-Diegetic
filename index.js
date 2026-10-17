@@ -20,7 +20,7 @@ import { createPipeline, isExcluded } from './src/pipeline.js';
 import { createGenerationCoordinator } from './src/coordinator.js';
 import { createInitializationController } from './src/lifecycle.js';
 import { mountPanel, unmountUi, collectRows } from './src/ui.js';
-import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating, deleteArtifact, clearImageCache } from './src/render.js';
+import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating, deleteArtifact, clearImageCache, openArtifactPopup, saveArtifactById } from './src/render.js';
 import { migrateCurrentChat } from './src/migrate.js';
 import { variantText, PAYLOAD_KEY } from './src/payload.js';
 import { urisStatus } from './src/images.js';
@@ -108,11 +108,9 @@ async function init(isCancelled = () => false) {
             id: 'source',
             name: 'Источник',
             source: settings.source,
-            sourceConfig: settings.source === 'profile'
-                ? { ...settings.cmProfile, extraBody: settings.customExtraBody || '' }
-                : settings.source === 'custom'
-                    ? { ...settings.custom, extraBody: settings.customExtraBody || '' }
-                    : null,
+            sourceConfig: settings.source === 'custom'
+                ? { ...settings.custom, extraBody: settings.customExtraBody || '' }
+                : { ...settings.cmProfile, extraBody: settings.customExtraBody || '' },
             httpAllowList: settings.httpAllowList,
         }),
         notifyRender: (id) => { reconcileMessage(id); panelApi?.refreshArtifacts?.(); },
@@ -156,7 +154,7 @@ async function init(isCancelled = () => false) {
         // ── Источник генерации (форма DS-Comments: сегментный выбор) ──
         getSourceKind: () => settings.source,
         setSourceKind: (kind) => {
-            settings.source = ['current', 'profile', 'custom'].includes(kind) ? kind : 'current';
+            settings.source = ['profile', 'custom'].includes(kind) ? kind : 'profile';
             save();
         },
         listCmProfiles,
@@ -244,6 +242,8 @@ async function init(isCancelled = () => false) {
         confirmDanger,
         // Панельный список артефактов чата: скан extra + регенерация/удаление.
         listArtifacts: () => collectRows(getChat()),
+        openArtifact: openArtifactPopup,
+        saveArtifact: saveArtifactById,
         runFor: (id) => {
             if (!coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
         },

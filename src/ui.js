@@ -30,6 +30,8 @@ export function collectRows(chat) {
 const CSS = `
 /* ── Панель настроек #dg-ext ─────────────────────────────────────────── */
 #dg-ext { font-size: 13px; line-height: 1.5; color: var(--SmartThemeBodyColor, #ddd); }
+/* Свои поля: у inline-drawer-content хоста паддингов нет, и секции липли к краям */
+#dg-ext .inline-drawer-content { padding: 2px 10px 10px; box-sizing: border-box; }
 #dg-ext .dg-body > .dg-section { border-top: 1px solid var(--black30a, rgba(128,128,128,.18));
   padding: 14px 0 6px; margin: 0; }
 #dg-ext .dg-body > .dg-section:first-child { border-top: none; padding-top: 2px; }
@@ -191,6 +193,8 @@ export function artifactListHtml(rows) {
             + `<span class="dg-art-status" style="color:${st.color}" title="${esc(st.label)}">●</span>`
             + `<span class="dg-art-type">${esc(a.type || 'artifact')}</span>`
             + `<span class="dg-art-meta">пост #${Number(a.msgId)}</span>`
+            + '<button type="button" class="dg-art-btn" data-art-open title="Открыть во всплывающем окне">👁</button>'
+            + '<button type="button" class="dg-art-btn" data-art-save title="Сохранить как .html">⤓</button>'
             + '<button type="button" class="dg-art-btn" data-art-regen title="Перегенерировать артефакты поста">⟳</button>'
             + '<button type="button" class="dg-art-btn" data-art-del title="Удалить артефакт">✕</button>'
             + '</div>';
@@ -505,8 +509,6 @@ export function mountPanel(deps) {
           <select id="dg-display-mode" class="text_pole">${displayOpts(st.displayMode)}</select></div>
         <div class="dg-row"><label for="dg-button-mode">Кнопка генерации</label>
           <select id="dg-button-mode" class="text_pole">${buttonOpts(st.buttonMode)}</select></div>
-        <p class="dg-hint">«Развернуть в посте»: клик по чипу раскрывает артефакт, меню
-          (свернуть / копировать / файл / удалить) остаётся под ним.</p>
       </div>
       <div class="dg-section">
         <p class="dg-title">Шаблон</p>
@@ -522,16 +524,14 @@ export function mountPanel(deps) {
           <input id="dg-tpl-saveas-name" class="text_pole" style="flex:1" placeholder="имя нового шаблона"/>
           <button class="menu_button dg-btn-primary" id="dg-tpl-saveas-ok">Сохранить</button>
         </div>
-        <p class="dg-hint" id="dg-tpl-hint"></p>
         <div class="dg-row" style="margin-top:8px">
-          <label for="dg-max-count">Артефактов на пост <span class="dg-hint">(в контракте — <code>&#123;&#123;MAX_COUNT&#125;&#125;</code>)</span></label>
+          <label for="dg-max-count">Артефактов на пост</label>
           <input id="dg-max-count" type="number" class="text_pole" min="1" max="5" value="${st.maxPerMessage}"/>
         </div>
       </div>
       <div class="dg-section">
         <p class="dg-title">Источник генерации</p>
         <div class="dg-seg" role="group" aria-label="Источник генерации">
-          <button type="button" class="dg-seg-btn" data-src="current">Текущий API</button>
           <button type="button" class="dg-seg-btn" data-src="profile">Профиль подключения</button>
           <button type="button" class="dg-seg-btn" data-src="custom">Свой endpoint</button>
         </div>
@@ -555,7 +555,6 @@ export function mountPanel(deps) {
         </div>
         <div class="dg-row"><label for="dg-extrabody">Доп. параметры запроса (JSON)</label>
           <input id="dg-extrabody" type="text" class="text_pole" value="${esc(deps.getCustom().extraBody)}" placeholder='{"reasoning_effort":"none"}' style="min-width:230px"/></div>
-        <p class="dg-hint" id="dg-source-hint">${esc(describeSourceLite(deps))}</p>
       </div>
       <div class="dg-section">
         <p class="dg-title">Контекст генерации</p>
@@ -572,14 +571,12 @@ export function mountPanel(deps) {
           <span class="dg-switch"><input type="checkbox" id="dg-ctx-character" class="checkbox" ${st.ctxCharacter ? 'checked' : ''}/><i></i></span></div>
         <div class="dg-row"><label for="dg-ctx-world">Лорбуки — активированные записи</label>
           <span class="dg-switch"><input type="checkbox" id="dg-ctx-world" class="checkbox" ${st.ctxWorld ? 'checked' : ''}/><i></i></span></div>
-        <p class="dg-hint">Секции собираются в канон-блок промпа; скан лора — dry-run,
-          на правилах самой таверны (sticky/cooldown не трогаются).</p>
       </div>
       <div class="dg-section">
         <details>
-          <summary><span class="dg-title" style="display:inline">Артефакты чата</span></summary>
+          <summary><span class="dg-title" style="display:inline">Библиотека артефактов</span></summary>
           <div id="dg-art-list"></div>
-          <p class="dg-hint">⟳ — регенерация артефактов поста, ✕ — удалить артефакт.
+          <p class="dg-hint">👁 — открыть, ⤓ — файл, ⟳ — регенерация поста, ✕ — удалить.
             Статус <b>orphan</b>: якорь потерян, в посте не показывается.</p>
         </details>
       </div>
@@ -626,18 +623,6 @@ export function mountPanel(deps) {
     };
 
     // ── Источник: сегментный выбор (форма DS-Comments) ──
-    const describeSourceLite = () => {
-        const kind = deps.getSourceKind();
-        if (kind === 'profile') {
-            const cm = deps.getCmProfile?.();
-            return `Источник: профиль подключения${cm?.profileName ? ` «${cm.profileName}»` : ' — не выбран'}`;
-        }
-        if (kind === 'custom') {
-            const c = deps.getCustom();
-            return `Источник: свой endpoint${c.apiurl ? ` (${c.apiurl})` : ' — не настроен'}`;
-        }
-        return 'Источник: текущий API SillyTavern';
-    };
     const syncSourceSection = () => {
         const kind = deps.getSourceKind();
         doc.querySelectorAll('#dg-ext .dg-seg-btn').forEach((b) => {
@@ -649,8 +634,6 @@ export function mountPanel(deps) {
         const cust = doc.getElementById('dg-src-custom');
         if (prof) prof.hidden = kind !== 'profile';
         if (cust) cust.hidden = kind !== 'custom';
-        const hint = doc.getElementById('dg-source-hint');
-        if (hint) hint.textContent = describeSourceLite();
     };
     const fillCustomKeyField = () => {
         const el = doc.getElementById('dg-key');
@@ -667,7 +650,6 @@ export function mountPanel(deps) {
         const st = deps.settings();
         const select = doc.getElementById('dg-template-select');
         const textarea = doc.getElementById('dg-template-text');
-        const hint = doc.getElementById('dg-tpl-hint');
         const bSave = doc.getElementById('dg-tpl-save');
         const bReset = doc.getElementById('dg-tpl-reset');
         const bDel = doc.getElementById('dg-tpl-del');
@@ -714,9 +696,6 @@ export function mountPanel(deps) {
         if (bSave) bSave.disabled = builtin || dangling;
         if (bReset) bReset.disabled = builtin || dangling;
         if (bDel) bDel.disabled = builtin || dangling;
-        if (hint) hint.textContent = builtin
-            ? 'встроенная основа — под замком; правится копией через «Сохранить как…»'
-            : dangling ? 'текст шаблона отсутствует в настройках сервера' : 'изменения применяются кнопкой «Сохранить»';
     }
 
     // Статус моста URIS — живой, не одноразовый снимок: панель монтируется
@@ -841,7 +820,6 @@ export function mountPanel(deps) {
     });
     $(doc).on('change.diegetic', '#dg-ext #dg-cm-profile', (e) => {
         deps.setCmProfile(String($(e.target).val() || ''), String($(e.target).find('option:selected').text() || ''));
-        $('#dg-source-hint').text(describeSourceLite());
     });
     $(doc).on('change.diegetic', '#dg-ext #dg-key', function () {
         const val = String($(this).val() || '');
@@ -859,7 +837,6 @@ export function mountPanel(deps) {
         if (!res) return;
         if (res.ok) globalThis.toastr?.success('Diegetic: endpoint применён');
         else globalThis.toastr?.error(`Diegetic: ${res.error}`);
-        $('#dg-source-hint').text(describeSourceLite());
     });
     $(doc).on('change.diegetic', '#dg-ext #dg-extrabody', function () {
         const res = deps.setCustomExtraBody?.(String($(this).val() || ''));
@@ -887,7 +864,22 @@ export function mountPanel(deps) {
     $(doc).on('change.diegetic', '#dg-ext #dg-img-quality', (e) => deps.setImageQuality?.(String(e.target.value)));
     $(doc).on('click.diegetic', '#dg-ext #dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
 
-    // Список артефактов: ⟳ — регенерация всего поста, ✕ — удалить один артефакт.
+    // Список артефактов: 👁 открыть, ⤓ файл, ⟳ — регенерация всего поста,
+    // ✕ — удалить один артефакт.
+    const artRowRef = (e) => {
+        const row = e.target.closest('.dg-art-row');
+        const msgId = Number(row?.dataset.msg);
+        const id = row?.dataset.art;
+        return Number.isFinite(msgId) && id != null ? { msgId, id } : null;
+    };
+    $(doc).on('click.diegetic', '#dg-ext [data-art-open]', (e) => {
+        const ref = artRowRef(e);
+        if (ref) deps.openArtifact?.(ref.msgId, ref.id);
+    });
+    $(doc).on('click.diegetic', '#dg-ext [data-art-save]', (e) => {
+        const ref = artRowRef(e);
+        if (ref) deps.saveArtifact?.(ref.msgId, ref.id);
+    });
     $(doc).on('click.diegetic', '#dg-ext [data-art-regen]', (e) => {
         const msgId = Number(e.target.closest('.dg-art-row')?.dataset.msg);
         if (Number.isFinite(msgId)) deps.runFor?.(msgId);

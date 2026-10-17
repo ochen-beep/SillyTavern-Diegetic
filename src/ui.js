@@ -1,14 +1,13 @@
-// src/ui.js — настройки в разделе «Расширения» таверны (inline-drawer) +
+// Настройки в разделе «Расширения» таверны (inline-drawer) +
 // лаунчер кнопки генерации (QR-бар / плавающая, режим buttonMode).
-// Панель: сдержанная типографика на переменных темы ST, одна колонка,
-// подписи над контролами, один primary на секцию. Шаблоны и контекст —
-// по форме DS-Comments (edit-on-place, тумблеры секций).
+// Панель: одна колонка на переменных темы ST, подписи над контролами,
+// один primary на секцию.
 // Делегированные обработчики — на document в namespace .diegetic и scoped к
 // #dg-ext: старый runner-скрипт рисует панель с теми же id — наши обработчики
 // не должны на него срабатывать.
 import { readRawPayload, digestForVariant } from './payload.js';
 
-/** Чистая: строки списка артефактов для панели — скан extra всего чата.
+/** Чистая: строки списка артефактов для панели — скан payload'ов всего чата.
  *  msgId — это индекс в массиве chat. Статус stale: digest payload разошёлся
  *  с текстом (правка/свайп) — render.js перепривяжет при следующей отрисовке. */
 export function collectRows(chat) {
@@ -73,7 +72,7 @@ const CSS = `
 #dg-ext details > summary { cursor: pointer; padding: 7px 0; list-style-position: inside; }
 #dg-ext details[open] > summary { margin-bottom: 4px; }
 
-/* Сегментный выбор источника (форма DS-Comments) */
+	/* Сегментный выбор источника */
 #dg-ext .dg-seg { display: flex; gap: 3px; margin-bottom: 10px; padding: 3px;
   background: var(--black30, rgba(0,0,0,.25));
   border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.15)); border-radius: 10px; }
@@ -216,7 +215,7 @@ let _launcherMode = null;
 let _onUrisBridgeEvent = null;
 let _fabResizeBound = false;
 
-// ── Плавающая кнопка: драг + запоминание позиции (форма DS-Comments FAB) ──
+// ── Плавающая кнопка: драг + запоминание позиции ──
 // Pointer Events + setPointerCapture: мышь и тач одним кодом; порог 6px отделяет
 // клик от драга; позиция пишется в localStorage только на отпускании.
 
@@ -626,13 +625,13 @@ export function mountPanel(deps) {
             ensureLauncher(deps.settings().buttonMode, deps.runLatest);
         };
 
-    // ── Список артефактов чата (README обещает: ⟳ регенерация / ✕ удаление) ──
+    // ── Список артефактов чата: ⟳ регенерация / ✕ удаление ──
     const renderArtifactList = () => {
         const box = doc.getElementById('dg-art-list');
         if (box && deps.listArtifacts) box.innerHTML = artifactListHtml(deps.listArtifacts());
     };
 
-    // ── Источник: сегментный выбор (форма DS-Comments) ──
+    // ── Источник: сегментный выбор ──
     const syncSourceSection = () => {
         const kind = deps.getSourceKind();
         doc.querySelectorAll('#dg-ext .dg-seg-btn').forEach((b) => {
@@ -651,7 +650,7 @@ export function mountPanel(deps) {
         deps.getCustomKey().then((k) => { if (el.isConnected && !el.value) el.placeholder = k ? 'сохранён — введи для замены' : 'sk-… (хранится в браузере)'; }).catch(() => {});
     };
 
-    // ── Редактор шаблонов (форма DS-Comments: список + edit-on-place) ──
+    // ── Редактор шаблонов: список + edit-on-place ──
     // Monotonic-request guard: быстрые переключения дают несколько async-
     // загрузок; отставшая не должна перезаписать textarea.
     let _tplReq = 0;
@@ -685,8 +684,8 @@ export function mountPanel(deps) {
         select.value = cur;
         let dangling = false;
         if (cur && !builtin && select.value !== cur) {
-            // Выбор есть, а текста нет (чищеный браузер / другой сервер): выбор
-            // молча не переписываем — DS syncPromptEditor.
+            // Выбор есть, а текста нет (чищеный браузер / другой сервер):
+            // выбор молча не переписываем.
             dangling = true;
             const missing = doc.createElement('option');
             missing.value = cur;
@@ -792,9 +791,8 @@ export function mountPanel(deps) {
         if (!name) return;
         const text = String($('#dg-template-text').val() ?? '');
         // Перезапись существующего пользовательского шаблона — под подтверждением:
-        // молчаливая замена необратимо теряла старый текст (Ф-10, найдено на
-        // живом стенде). «Сохранить» в редакторе не трогаем — там намеренная
-        // правка активного шаблона.
+        // молчаливая замена необратимо теряла старый текст. «Сохранить» в
+        // редакторе не трогаем — там намеренная правка активного шаблона.
         if (deps.listTemplates().includes(name) && deps.confirmDanger) {
             const ok = await deps.confirmDanger(`Шаблон «${name}» уже есть. Перезаписать его текст новым?`);
             if (!ok) return; // диалог «Сохранить как…» остаётся открытым
@@ -803,8 +801,7 @@ export function mountPanel(deps) {
             $('#dg-tpl-saveas-row').hide();
             $('#dg-tpl-saveas-name').val('');
         } else {
-            // Имя занято встроенной основой (или не подтвердилось) — сказать,
-            // а не молча закрыть диалог без результата (Ф-4).
+            // Имя занято встроенной основой — сказать, а не молча закрыть диалог.
             globalThis.toastr?.error(`Diegetic: «${name}» — имя занято встроенной основой`);
         }
         tplResync();
@@ -823,7 +820,7 @@ export function mountPanel(deps) {
         tplResync();
     });
 
-    // Источник: сегментный переключатель сохраняет сразу (DS), поля endpoint — по «Применить».
+    // Источник: сегментный переключатель сохраняет сразу, поля endpoint — по «Применить».
     $(doc).on('click.diegetic', '#dg-ext .dg-seg-btn', (e) => {
         deps.setSourceKind(String($(e.currentTarget).data('src')));
         syncSourceSection();
@@ -854,7 +851,7 @@ export function mountPanel(deps) {
     });
     $(doc).on('change.diegetic', '#dg-ext #dg-max-count', (e) => { deps.setMaxPerMessage?.(Number(e.target.value)); });
 
-    // Контекст (форма DS-Comments: каждая секция — тумблер, глубина при истории)
+    // Контекст: каждая секция — тумблер, глубина при истории.
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-history', (e) => {
         deps.setCtxHistory?.(e.target.checked);
         $('#dg-ctx-depth').prop('disabled', !e.target.checked);

@@ -1,12 +1,12 @@
-// src/render.js — оболочки артефактов и кнопки постов в чате.
-// Форма reconcile: URIS src/inline/render.js (data-ключ, MutationObserver +
-// debounce, точечные проходы). Режимы показа (settings.displayMode):
+// Оболочки артефактов и кнопки постов в чате.
+// Reconcile: data-ключ, MutationObserver + debounce, точечные проходы.
+// Режимы показа (settings.displayMode):
 //   inline — iframe сразу в посте;
 //   expand — чип-ряд [тип][Copy HTML][Delete]; клик по типу раскрывает iframe в посте;
 //   popup  — тот же чип-ряд, клик открывает лайтбокс поверх чата.
 // Развёрнутые чипы (expand) запоминаются в _expanded до перезагрузки страницы.
 //
-// Кнопки поста — в штатном ряду .mes_buttons (форма Glosses addRegenButton):
+// Кнопки поста — в штатном ряду .mes_buttons:
 // ◆ сгенерировать/перегенерировать, 📷 заполнить фотослоты (режим «по кнопке»).
 
 import { getMessage, persistChat } from './host.js';
@@ -30,9 +30,9 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 // allow-same-origin НЕ давать (иначе скрипт артефакта достаёт parent DOM).
 // Высота — postMessage-рукопожатие; html принудительно прозрачный и без
 // скроллбаров (иммерсивная вставка — скролл внутри артефакта не трогаем).
-// html/body — нулевой min-height (форма HTML-Inserts normalizeDocument): иначе
-// 100vh-ловушка на body раздувает iframe и после сворачивания артефакта внутри
-// себя высота не сжимается обратно — внизу висит чёрная пустота.
+// html/body — нулевой min-height: иначе 100vh-ловушка на body раздувает
+// iframe и после сворачивания артефакта внутри себя высота не сжимается
+// обратно — внизу висит чёрная пустота.
 const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}</style>';
 // Рантайм-высота меряется по body, а не по documentElement.scrollHeight:
 // у корневого скроллера scrollHeight не опускается ниже вьюпорта фрейма,
@@ -50,9 +50,9 @@ const RESIZE_SNIPPET = '<script>(function(){var m=function(){var b=document.body
 // команды контролов (✎/⟳) уходят postMessage'ом, по образцу рукопожатия высоты.
 // Capture + stopPropagation: клик по контролу не должен будить JS самого артефакта.
 const CMD_SNIPPET = '<script>document.addEventListener("click",function(e){var t=e.target&&e.target.closest?e.target.closest("[data-dg-cmd]"):null;if(!t)return;e.preventDefault();e.stopPropagation();try{parent.postMessage({__dgCmd:String(t.getAttribute("data-dg-cmd")),ordinal:Number(t.getAttribute("data-ordinal"))},"*")}catch(x){}},true)</' + 'script>';
-// Фрагменты без <head>/<html> (модель отдала кусок документа) раньше проходили
-// мимо обеих замен — CSS-нормализация молча терялась. Стили в начало строки:
-// браузер допарсит фрагмент и подхватит их.
+// Фрагменты без <head>/<html> (модель отдала кусок документа) проходили бы
+// мимо обеих замен — стили в начало строки: браузер допарсит фрагмент
+// и подхватит их.
 export const withImmersiveCss = (html) => {
     const s = String(html);
     if (/<head[^>]*>/i.test(s)) return s.replace(/<head[^>]*>/i, (m) => m + IMMERSIVE_CSS);
@@ -104,7 +104,7 @@ const shellKey = (a) => `${baseKey(a)}|${isOpen(a) ? 'o' : 'c'}`;
 
 // Контролы фотослота (✎ промпт, ⟳ перегенерация) — display-only: payload кнопок
 // не хранит, сохранённый .html остаётся чистым артефактом. Стили лежат здесь же —
-// родительский CSS в sandbox-iframe не проникает (старый блок в ui.js был мёртвым).
+// родительский CSS в sandbox-iframe не проникает.
 const SLOT_CTL_CSS = '<style>'
     + '.dg-slot-ctl{position:absolute;top:6px;z-index:30;width:22px;height:22px;border-radius:50%;'
     + 'background:rgba(0,0,0,.55);color:#fff;font-size:13px;line-height:22px;text-align:center;'
@@ -255,9 +255,8 @@ function buildActionRow({ collapse = false } = {}) {
     return row;
 }
 
-// Артефакты рендерим через blob: URL — переносимый дефолт. В опорном стенде
-// ST CSP и вовсе отключён (server-main.js: helmet contentSecurityPolicy: false),
-// но blob: — не собираемый srcdoc и от frame-src хоста не зависит.
+// Артефакты рендерим через blob: URL — не собираемый srcdoc и не зависит
+// от frame-src хоста (в опорном ST CSP отключён: helmet contentSecurityPolicy: false).
 function mountFrameHtml(frame, html) {
     if (frame.dataset.dgBlob) URL.revokeObjectURL(frame.dataset.dgBlob);
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
@@ -486,7 +485,7 @@ function onKeydown(e) {
     if (e.key === 'Escape') { closePopup(); closeEditor(); }
 }
 
-/** Кнопки поста в .mes_buttons (форма Glosses): ◆ генерация/реген, 📷 фотослоты.
+/** Кнопки поста в .mes_buttons: ◆ генерация/реген, 📷 фотослоты.
  *  Видны только в режиме buttonMode 'post'; busy-класс вешает setGenerating.
  *  Экспорт — для тестов: регрессия «клик по устаревшему mesid». */
 export function ensureMsgButtons(mesEl, msgId, msg) {

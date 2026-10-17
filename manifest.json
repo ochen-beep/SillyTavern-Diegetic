@@ -4,7 +4,7 @@
     "dependencies": [],
     "js": "index.js",
     "author": "beep",
-    "version": "1.3.0",
+    "version": "0.0.1-alpha",
     "homePage": "https://github.com/ochen-beep/SillyTavern-Diegetic",
     "auto_update": false,
     "minimum_client_version": "1.19.0",

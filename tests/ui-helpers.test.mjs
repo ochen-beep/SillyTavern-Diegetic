@@ -1,7 +1,7 @@
 // tests/ui-helpers.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { collectRows, esc, describeSource } from '../src/ui.js';
+import { collectRows, esc } from '../src/ui.js';
 import { stampPayload, writePayload } from '../src/payload.js';
 
 const TEXT = 'Она взяла телефон.\n\nДверь закрылась.';
@@ -35,13 +35,4 @@ test('collectRows: чужие/пустые сообщения пропускаю
 
 test('esc: экранирует &<>"\'', () => {
     assert.equal(esc('<img src=x onerror=1>&"\''), '&lt;img src=x onerror=1&gt;&amp;&quot;&#39;');
-});
-
-test('describeSource: человекочитаемая подпись источника профиля', () => {
-    assert.match(describeSource({ source: 'current' }), /текущий API/);
-    assert.match(describeSource({ source: 'profile', sourceConfig: { profileName: 'Грок' } }), /профиль подключения.*Грок/s);
-    assert.match(describeSource({ source: 'profile', sourceConfig: null }), /профиль подключения/);
-    assert.match(describeSource({ source: 'custom', sourceConfig: { apiurl: 'https://x/v1' } }), /endpoint.*https:\/\/x\/v1/s);
-    assert.match(describeSource({ source: 'custom', sourceConfig: null }), /endpoint/);
-    assert.equal(describeSource(null), '');
 });

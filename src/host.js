@@ -39,9 +39,14 @@ async function generateViaCm({ system, user, profile, signal }) {
     }
     const profileId = profile?.sourceConfig?.profileId;
     if (!profileId) throw new Error('В профиле не выбран профиль подключения');
-    // CM мог ещё не наполнить профили к первому запросу — короткое ожидание.
-    for (let i = 0; i < 15 && listCmProfiles().length === 0; i++) {
+    // CM мог ещё не наполнить профили к первому запросу — одна передышка;
+    // если и после неё список пуст, профиль не найдётся и через 4,5 с —
+    // фейлим сразу и понятно.
+    if (listCmProfiles().length === 0) {
         await new Promise(r => setTimeout(r, 300));
+        if (listCmProfiles().length === 0) {
+            throw new Error(`Профили Connection Manager не загружены — профиль «${profile?.sourceConfig?.profileName || profileId}» не найден. Проверь настройки CM или выбери другой источник`);
+        }
     }
     // Доп. параметры запроса (например, отключение reasoning) — в payload.
     let override = {};
@@ -103,6 +108,11 @@ async function generateViaCustom({ system, user, profile, signal }) {
         return text;
     } catch (e) {
         if (ctrl.signal.aborted && signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        // TypeError = fetch даже не получил ответ: CORS-блокировка или сеть.
+        // Голый «Failed to fetch» пользователя ни к чему не ведёт.
+        if (e instanceof TypeError) {
+            throw new Error(`custom endpoint: ${e.message} — сервер не ответил. Проверь URL и CORS-политику: сервер должен отдавать Access-Control-Allow-Origin для запросов из браузера`);
+        }
         throw e;
     } finally {
         clearTimeout(timer);

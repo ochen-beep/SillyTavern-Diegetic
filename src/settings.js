@@ -37,7 +37,7 @@ const bounded = (v, lo, hi, dflt) => {
     return Number.isFinite(n) && n >= lo && n <= hi ? n : dflt;
 };
 
-// templateText '' = встроенный универсальный шаблон (резолвится через core.getUniversalTemplate).
+// templateText '' = встроенный универсальный шаблон (резолвится через resolveTemplate → core.getBuiltinTemplate).
 // Миграция: lensText старых сохранённых профилей (включая сентинел '@universal') переезжает в templateText.
 // Профильные templateText/builtin — legacy: шаблоны переехали в именованное хранилище settings.templates,
 // поле остаётся в нормализации ради старых сохранений и больше нигде не читается.

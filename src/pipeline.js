@@ -10,6 +10,7 @@ import { parseDiegeticResponse } from './parser.js';
 import { assemblePromptParts } from './contract.js';
 import {
     readRawPayload, readVerifiedPayload, stampPayload, writePayload,
+    payloadBelongsToOtherVariant,
     variantText, digestForVariant,
 } from './payload.js';
 import {
@@ -44,8 +45,12 @@ export function createPipeline(deps) {
         const swipeIdx = msg.swipe_id ?? 0;
         const prose = variantText(msg, swipeIdx);
         if (!isViableMessageText(prose)) return;
-        // payload уже есть — не дублим (force перезаписывает тот же слот)
-        if (!force && readRawPayload(msg, swipeIdx)) return;
+        // payload уже есть — не дублим (force перезаписывает тот же слот).
+        // Чужой payload НЕ блокирует прогон: ST клонирует extra соседнего
+        // варианта в слот нового свайпа (script.js:3711) — новый вариант
+        // артефактов не имеет, генерируем, а не молча выходим.
+        const rawPayload = readRawPayload(msg, swipeIdx);
+        if (!force && rawPayload && !payloadBelongsToOtherVariant(msg, swipeIdx, rawPayload)) return;
         const proseDigest = contentDigest(prose);
 
         const run = deps.coordinator.beginRun(messageId);

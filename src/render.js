@@ -39,9 +39,15 @@ const RESIZE_SNIPPET = '<script>(function(){var p=function(){try{parent.postMess
 // команды контролов (✎/⟳) уходят postMessage'ом, по образцу рукопожатия высоты.
 // Capture + stopPropagation: клик по контролу не должен будить JS самого артефакта.
 const CMD_SNIPPET = '<script>document.addEventListener("click",function(e){var t=e.target&&e.target.closest?e.target.closest("[data-dg-cmd]"):null;if(!t)return;e.preventDefault();e.stopPropagation();try{parent.postMessage({__dgCmd:String(t.getAttribute("data-dg-cmd")),ordinal:Number(t.getAttribute("data-ordinal"))},"*")}catch(x){}},true)</' + 'script>';
-const withImmersiveCss = (html) => /<head[^>]*>/i.test(String(html))
-    ? String(html).replace(/<head[^>]*>/i, (m) => m + IMMERSIVE_CSS)
-    : String(html).replace(/<html[^>]*>/i, (m) => m + '<head>' + IMMERSIVE_CSS + '</head>');
+// Фрагменты без <head>/<html> (модель отдала кусок документа) раньше проходили
+// мимо обеих замен — CSS-нормализация молча терялась. Стили в начало строки:
+// браузер допарсит фрагмент и подхватит их.
+export const withImmersiveCss = (html) => {
+    const s = String(html);
+    if (/<head[^>]*>/i.test(s)) return s.replace(/<head[^>]*>/i, (m) => m + IMMERSIVE_CSS);
+    if (/<html[^>]*>/i.test(s)) return s.replace(/<html[^>]*>/i, (m) => m + '<head>' + IMMERSIVE_CSS + '</head>');
+    return IMMERSIVE_CSS + s;
+};
 const clampH = (h) => Math.min(Math.max(40, Math.round(h) || 0), 4000);
 
 /**
@@ -60,6 +66,8 @@ export function normalizeIntrinsicHeight(html) {
 
 let _observer = null;
 let _debounceId = null;
+let _retryId = null;
+let _active = false;
 let _onMessage = null;
 let _onClick = null;
 let _popup = null;
@@ -69,6 +77,9 @@ const _expanded = new Set();
 /** path → dataUrl (фото /user/images проксируются в data: — CORP: same-origin
  *  хоста не даёт opaque-iframe грузить их напрямую); null = загрузка идёт. */
 const _imgCache = new Map();
+
+/** Сброс кэша фото при смене чата — data:-URL привязаны к чату, расти дальше не должны. */
+export function clearImageCache() { _imgCache.clear(); }
 
 const baseKey = (a) => `${a.id}|${contentDigest(a.html)}`;
 /** inline — всегда iframe; expand — по памяти раскрытий; popup — всегда чип. */
@@ -215,7 +226,7 @@ function buildActionRow({ collapse = false } = {}) {
     copy.type = 'button';
     copy.className = 'dg-chip-action';
     copy.setAttribute('data-dg-copy', '');
-    copy.textContent = '⧉ Copy HTML';
+    copy.textContent = '⧉ Копировать';
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'dg-chip-action';
@@ -226,13 +237,14 @@ function buildActionRow({ collapse = false } = {}) {
     del.type = 'button';
     del.className = 'dg-chip-action';
     del.setAttribute('data-dg-del', '');
-    del.textContent = '✕ Delete';
+    del.textContent = '✕ Удалить';
     row.append(copy, save, del);
     return row;
 }
 
-// SillyTavern отдаёт страницу с CSP, под которым srcdoc-iframe не грузится
-// (about:srcdoc не попадает в frame-src) — рендерим артефакты через blob: URL.
+// Артефакты рендерим через blob: URL — переносимый дефолт. В опорном стенде
+// ST CSP и вовсе отключён (server-main.js: helmet contentSecurityPolicy: false),
+// но blob: — не собираемый srcdoc и от frame-src хоста не зависит.
 function mountFrameHtml(frame, html) {
     if (frame.dataset.dgBlob) URL.revokeObjectURL(frame.dataset.dgBlob);
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
@@ -320,8 +332,9 @@ function saveArtifactFile(artifact) {
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-/** Удалить артефакт из payload; пустой payload снимается целиком. */
-function deleteArtifact(msgId, artifactId) {
+/** Удалить артефакт из payload; пустой payload снимается целиком.
+ *  Экспорт — панельный список артефактов (ui.js) удаляет через index.js. */
+export function deleteArtifact(msgId, artifactId) {
     const msg = getMessage(msgId);
     if (!msg) return;
     const swipeIdx = msg.swipe_id ?? 0;
@@ -473,7 +486,10 @@ export function ensureMsgButtons(mesEl, msgId, msg) {
         if (hint) btns.insertBefore(gen, hint);
         else btns.prepend(gen);
     }
-    gen.title = hasPayload ? 'Перегенерировать артефакты' : 'Сгенерировать артефакт';
+    // Не перетирать тултип «Отменить генерацию», пока кнопка в busy.
+    if (!gen.classList?.contains('dg-busy')) {
+        gen.title = hasPayload ? 'Перегенерировать артефакты' : 'Сгенерировать артефакт';
+    }
     // 📷 — только когда есть что заполнять и режим «по кнопке».
     let cam = btns.querySelector('.dg-photo-btn');
     const wantCam = _deps?.settings?.().imageMode === 'button' && _deps?.hasPending?.(msgId);
@@ -493,10 +509,21 @@ export function ensureMsgButtons(mesEl, msgId, msg) {
     }
 }
 
-/** Индикатор занятости на всех кнопках генерации (пост/QR-бар/FAB). */
+/** Индикатор занятости на всех кнопках генерации (пост/QR-бар/FAB).
+ *  Пока крутится — тултип меняется на «Отменить»: повторный клик абортирует
+ *  прогон, иначе про отмену знает только читатель README. */
 export function setGenerating(on) {
     if (typeof document === 'undefined') return;
-    document.querySelectorAll('.dg-gen-btn, .dg-launcher-btn').forEach(b => b.classList.toggle('dg-busy', on));
+    document.querySelectorAll('.dg-gen-btn, .dg-launcher-btn').forEach(b => {
+        b.classList.toggle('dg-busy', on);
+        if (on) {
+            if (!b.dataset.dgTitle) b.dataset.dgTitle = b.title || '';
+            b.title = 'Отменить генерацию';
+        } else if (b.dataset.dgTitle) {
+            b.title = b.dataset.dgTitle;
+            delete b.dataset.dgTitle;
+        }
+    });
 }
 
 /**
@@ -573,7 +600,9 @@ function collectAffectedMes(mutations) {
 }
 
 function ensureObserver() {
-    if (_observer || typeof MutationObserver === 'undefined') return;
+    // После shutdownRender обсервер не пересоздаём: иначе retry-интервал мог
+    // вернуть reconcileMes с устаревшими _deps уже после disable.
+    if (!_active || _observer || typeof MutationObserver === 'undefined') return;
     const chatEl = document.getElementById('chat');
     if (!chatEl) return;
     _observer = new MutationObserver((mutations) => {
@@ -598,7 +627,7 @@ export function reconcile({ only = null } = {}) {
     if (!scope) return;
     for (const mesEl of scope.querySelectorAll('.mes')) {
         if (only && !only.has(Number(mesEl.getAttribute('mesid')))) continue;
-        try { reconcileMes(mesEl); } catch (e) { try { globalThis.__dgErr = String(e?.stack || e); } catch { /* игнорируем */ } }
+        try { reconcileMes(mesEl); } catch (e) { console.warn('[Diegetic] reconcile:', e); }
     }
 }
 
@@ -652,6 +681,7 @@ function onDocumentClick(e) {
 export function initRender(deps = {}) {
     if (typeof window === 'undefined') return;
     _deps = deps;
+    _active = true;
     // Отладочный хук (стенд): window.__diegetic.reconcile() вручную.
     try { globalThis.__diegetic = { reconcile, setGenerating, deps: () => _deps }; } catch { /* не критично */ }
     if (!_onMessage) {
@@ -676,15 +706,19 @@ export function initRender(deps = {}) {
     ensureObserver();
     if (!_observer) {
         let tries = 0;
-        const t = setInterval(() => {
+        // id в модуле: shutdownRender обязан гасить ретрай, иначе он пересоздаст
+        // обсервер уже после disable.
+        _retryId = setInterval(() => {
             ensureObserver();
-            if (_observer || ++tries >= 10) clearInterval(t);
+            if (_observer || ++tries >= 10) { clearInterval(_retryId); _retryId = null; }
         }, 500);
     }
     reconcile();
 }
 
 export function shutdownRender() {
+    _active = false;
+    if (_retryId) { clearInterval(_retryId); _retryId = null; }
     if (_observer) { try { _observer.disconnect(); } catch { /* уже снят */ } _observer = null; }
     if (_debounceId) { clearTimeout(_debounceId); _debounceId = null; }
     if (_onMessage && typeof window !== 'undefined') {
@@ -699,6 +733,7 @@ export function shutdownRender() {
     closePopup();
     closeEditor();
     _expanded.clear();
+    _imgCache.clear();
     if (typeof document !== 'undefined') {
         document.querySelectorAll(`[${SHELL_ATTR}]`).forEach(s => s.remove());
         document.querySelectorAll('.dg-gen-btn, .dg-photo-btn').forEach(b => b.remove());

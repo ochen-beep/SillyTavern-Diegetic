@@ -71,6 +71,30 @@ test('payload уже есть: идемпотентный выход без ге
     assert.equal(called, false);
 });
 
+test('чужой payload в слоте (клон ST при свайпе): генерация НЕ блокируется', async () => {
+    // Хост при создании свайпа клонирует extra соседнего варианта в слот
+    // нового (script.js:3711): у нового варианта артефактов нет — прогон
+    // обязан генерировать, а не молча выходить (смотри Ф-1 ревью №2).
+    const OTHER = 'Другой вариант текста поста.';
+    const { deps, msg } = makeDeps();
+    msg.swipes = [PROSE, OTHER];
+    msg.swipe_info = [{}, {}];
+    const stamped = stampPayload(msg, 1, [
+        { id: 'other:0', type: 'note', anchor: 'x', status: 'ok', html: '<b>other</b>', bytes: 11, createdAt: 1, profileId: 'default' },
+    ]);
+    writePayload(msg, 1, stamped);
+    // Точная эмуляция клона хоста в слот нового варианта + его зеркало.
+    msg.swipe_info[0] = { extra: structuredClone(msg.swipe_info[1].extra) };
+    msg.extra = structuredClone(msg.swipe_info[1].extra);
+    let called = 0;
+    deps.generateText = async () => { called++; return RESP; };
+    await createPipeline(deps).run(0);
+    assert.equal(called, 1, 'клон чужого варианта не должен гасить автогенерацию');
+    const p = readVerifiedPayload(msg, 0);
+    assert.ok(p, 'для нового варианта записан свой payload');
+    assert.ok(p.artifacts[0].html.includes('<p>phone</p>'));
+});
+
 test('API упал: тост с ошибкой, payload не записан', async () => {
     const { deps, msg, notifications } = makeDeps({ failGen: true });
     await createPipeline(deps).run(0);

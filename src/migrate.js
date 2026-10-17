@@ -72,6 +72,9 @@ export async function migrateCurrentChat() {
     let changed = false;
     chat.forEach((msg, i) => {
         if (!msg || typeof msg !== 'object') return;
+        // updateMessageBlock — только для реально мигрированного сообщения:
+        // общий changed после первого же фенса дёргал бы re-render всего хвоста чата.
+        let msgChanged = false;
         const variants = Array.isArray(msg.swipes) && msg.swipes.length ? msg.swipes.length : 0;
         if (variants > 0) {
             for (let v = 0; v < variants; v++) {
@@ -94,6 +97,7 @@ export async function migrateCurrentChat() {
                     msg.extra.dg = slot.extra.dg;
                 }
                 changed = true;
+                msgChanged = true;
             }
         } else if (hasOwnBlock(msg.mes)) {
             const artifacts = extractLegacyArtifacts(msg.mes);
@@ -105,8 +109,9 @@ export async function migrateCurrentChat() {
                 generatedAt: Date.now(), artifacts,
             };
             changed = true;
+            msgChanged = true;
         }
-        if (changed) {
+        if (msgChanged) {
             try { ctx.updateMessageBlock?.(i, msg); } catch { /* перерендер не критичен */ }
         }
     });

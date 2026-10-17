@@ -83,6 +83,18 @@ const CSS = `
   color: var(--black300, #16161a); opacity: 1; font-weight: 600; }
 #dg-ext .dg-seg-btn:focus-visible { outline: 2px solid var(--SmartThemeEmColor, #c9a86a); outline-offset: 1px; }
 
+/* Список артефактов чата */
+#dg-ext .dg-art-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+  border-top: 1px solid var(--black30a, rgba(128,128,128,.14)); font-size: 12.5px; }
+#dg-ext .dg-art-row:first-of-type { border-top: none; }
+#dg-ext .dg-art-status { flex: none; width: 10px; text-align: center; }
+#dg-ext .dg-art-type { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dg-ext .dg-art-meta { flex: 1; opacity: .55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dg-ext .dg-art-btn { flex: none; cursor: pointer; padding: 2px 8px; font-size: 12px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.2)); border-radius: 6px;
+  background: var(--black30, rgba(0,0,0,.25)); color: inherit; }
+#dg-ext .dg-art-btn:hover { border-color: var(--SmartThemeEmColor, #c9a86a); }
+
 /* ── Артефакты в посте: по центру, без швов и скроллбаров ───────────── */
 .dg-shell { margin: 10px 0; position: relative; display: flex; flex-direction: column;
   align-items: center; }
@@ -103,9 +115,14 @@ const CSS = `
 .dg-popup { position: fixed; inset: 0; z-index: 2999; display: flex; align-items: center;
   justify-content: center; }
 .dg-popup-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
+/* Колонка: шапка сверху во всю ширину, артефакт ниже. Без column iframe на
+   100% ширины сплющивает header в узкую полоску сбоку. */
 .dg-popup-dialog { position: relative; width: min(820px, 94vw); height: min(86vh, 900px);
-  display: flex; align-items: center; justify-content: center; }
-.dg-popup-dialog iframe { width: 100%; height: 100%; border: 0; background: transparent; }
+  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; }
+.dg-popup-dialog > header { flex: none; display: flex; justify-content: space-between;
+  align-items: center; padding: 6px 12px; color: #fff; font-size: 13px; opacity: .85; }
+.dg-popup-dialog > header .dg-popup-close { position: static; }
+.dg-popup-dialog iframe { flex: 1; min-height: 0; width: 100%; border: 0; background: transparent; }
 .dg-popup-close { position: absolute; top: 10px; right: 14px; z-index: 2; cursor: pointer;
   background: rgba(0,0,0,.55); color: #fff; border: 1px solid rgba(255,255,255,.3);
   border-radius: 50%; width: 34px; height: 34px; font-size: 16px; }
@@ -152,12 +169,27 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&a
 const DISPLAY_LABELS = { inline: 'Сразу в посте', expand: 'Кнопка → развернуть в посте', popup: 'Кнопка → во всплывающем окне' };
 const BUTTON_LABELS = { post: 'У каждого поста', bar: 'В квик-баре', floating: 'Плавающая' };
 
-/** Чистая: подпись источника профиля для подсказки под селектом шаблона. */
-export function describeSource(p) {
-    if (!p) return '';
-    if (p.source === 'profile') return `Источник: профиль подключения${p.sourceConfig?.profileName ? ` «${p.sourceConfig.profileName}»` : ''}`;
-    if (p.source === 'custom') return `Источник: свой endpoint${p.sourceConfig?.apiurl ? ` (${p.sourceConfig.apiurl})` : ''}`;
-    return 'Источник: текущий API SillyTavern';
+/** Статусы привязки артефакта для панельного списка: точка-цвет + пояснение. */
+const ART_STATUS = {
+    ok: { color: '#9c9', label: 'привязан к якорю' },
+    fuzzy: { color: '#fc6', label: 'привязка неточная (fuzzy)' },
+    orphan: { color: '#f88', label: 'якорь не найден — в посте не показывается' },
+    stale: { color: '#9cf', label: 'текст поста менялся — перепривяжется при отрисовке' },
+};
+
+/** Чистая: HTML строк панельного списка артефактов чата. */
+export function artifactListHtml(rows) {
+    if (!rows?.length) return '<p class="dg-hint">в этом чате артефактов пока нет</p>';
+    return rows.map((a) => {
+        const st = ART_STATUS[a.status] ?? ART_STATUS.ok;
+        return `<div class="dg-art-row" data-msg="${Number(a.msgId)}" data-art="${esc(a.id)}">`
+            + `<span class="dg-art-status" style="color:${st.color}" title="${esc(st.label)}">●</span>`
+            + `<span class="dg-art-type">${esc(a.type || 'artifact')}</span>`
+            + `<span class="dg-art-meta">пост #${Number(a.msgId)}</span>`
+            + '<button type="button" class="dg-art-btn" data-art-regen title="Перегенерировать артефакты поста">⟳</button>'
+            + '<button type="button" class="dg-art-btn" data-art-del title="Удалить артефакт">✕</button>'
+            + '</div>';
+    }).join('');
 }
 
 // ── Лаунчер кнопки генерации (режим buttonMode) ──
@@ -495,7 +527,7 @@ export function mountPanel(deps) {
         <p class="dg-title">Источник генерации</p>
         <div class="dg-seg" role="group" aria-label="Источник генерации">
           <button type="button" class="dg-seg-btn" data-src="current">Текущий API</button>
-          <button type="button" class="dg-seg-btn" data-src="profile">Профиль CM</button>
+          <button type="button" class="dg-seg-btn" data-src="profile">Профиль подключения</button>
           <button type="button" class="dg-seg-btn" data-src="custom">Свой endpoint</button>
         </div>
         <div id="dg-src-profile" hidden>
@@ -540,6 +572,14 @@ export function mountPanel(deps) {
       </div>
       <div class="dg-section">
         <details>
+          <summary><span class="dg-title" style="display:inline">Артефакты чата</span></summary>
+          <div id="dg-art-list"></div>
+          <p class="dg-hint">⟳ — регенерация артефактов поста, ✕ — удалить артефакт.
+            Статус <b>orphan</b>: якорь потерян, в посте не показывается.</p>
+        </details>
+      </div>
+      <div class="dg-section">
+        <details>
           <summary><span class="dg-title" style="display:inline">Фото через URIS</span></summary>
           <div class="dg-row"><label for="dg-img-mode">Режим</label>
             <select id="dg-img-mode" class="text_pole">
@@ -570,8 +610,15 @@ export function mountPanel(deps) {
             syncTemplateEditor();
             syncSourceSection();
             fillCustomKeyField();
+            renderArtifactList();
             ensureLauncher(deps.settings().buttonMode, deps.runLatest);
         };
+
+    // ── Список артефактов чата (README обещает: ⟳ регенерация / ✕ удаление) ──
+    const renderArtifactList = () => {
+        const box = doc.getElementById('dg-art-list');
+        if (box && deps.listArtifacts) box.innerHTML = artifactListHtml(deps.listArtifacts());
+    };
 
     // ── Источник: сегментный выбор (форма DS-Comments) ──
     const describeSourceLite = () => {
@@ -632,7 +679,9 @@ export function mountPanel(deps) {
         }
         for (const name of deps.listTemplates()) {
             const o = doc.createElement('option');
-            o.value = esc(name);
+            // Сырое имя: присваивание value не парсит HTML, а esc() дал бы
+            // «a&amp;b» — сравнение select.value с активным именем промахивалось.
+            o.value = name;
             o.textContent = name;
             select.appendChild(o);
         }
@@ -728,7 +777,13 @@ export function mountPanel(deps) {
     // Шаблоны: локальная пересинхронизация редактора — полный render() закрыл бы
     // details и сбросил бы прокрутку.
     const tplResync = () => syncTemplateEditor();
-    $(doc).on('change.diegetic', '#dg-ext #dg-template-select', (e) => { deps.selectTemplate(String($(e.target).val())); tplResync(); });
+    // .val() на селекте без выбранной опции — null; String(null) записал бы
+    // строку "null" в activeTemplate.
+    $(doc).on('change.diegetic', '#dg-ext #dg-template-select', (e) => {
+        const v = $(e.target).val();
+        deps.selectTemplate(v == null ? '' : String(v));
+        tplResync();
+    });
     $(doc).on('click.diegetic', '#dg-ext #dg-tpl-save', () => {
         const text = String($('#dg-template-text').val() ?? '');
         deps.saveTemplate(text);
@@ -745,6 +800,10 @@ export function mountPanel(deps) {
         if (deps.saveTemplateAs(name, text)) {
             $('#dg-tpl-saveas-row').hide();
             $('#dg-tpl-saveas-name').val('');
+        } else {
+            // Имя занято встроенной основой (или не подтвердилось) — сказать,
+            // а не молча закрыть диалог без результата (Ф-4).
+            globalThis.toastr?.error(`Diegetic: «${name}» — имя занято встроенной основой`);
         }
         tplResync();
     });
@@ -752,7 +811,12 @@ export function mountPanel(deps) {
         await deps.resetTemplateToBuiltin();
         tplResync();
     });
-    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-del', () => {
+    $(doc).on('click.diegetic', '#dg-ext #dg-tpl-del', async () => {
+        const name = deps.getActiveTemplate();
+        const ok = deps.confirmDanger
+            ? await deps.confirmDanger(`Удалить шаблон «${name}»? Его текст пропадёт безвозвратно.`)
+            : true;
+        if (!ok) return;
         deps.deleteActiveTemplate();
         tplResync();
     });
@@ -809,13 +873,35 @@ export function mountPanel(deps) {
     });
     $(doc).on('change.diegetic', '#dg-ext #dg-img-quality', (e) => deps.setImageQuality?.(String(e.target.value)));
     $(doc).on('click.diegetic', '#dg-ext #dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
+
+    // Список артефактов: ⟳ — регенерация всего поста, ✕ — удалить один артефакт.
+    $(doc).on('click.diegetic', '#dg-ext [data-art-regen]', (e) => {
+        const msgId = Number(e.target.closest('.dg-art-row')?.dataset.msg);
+        if (Number.isFinite(msgId)) deps.runFor?.(msgId);
+    });
+    $(doc).on('click.diegetic', '#dg-ext [data-art-del]', (e) => {
+        const row = e.target.closest('.dg-art-row');
+        const msgId = Number(row?.dataset.msg);
+        const id = row?.dataset.art;
+        if (Number.isFinite(msgId) && id != null) {
+            deps.removeArtifact?.(msgId, id);
+            renderArtifactList();
+        }
+    });
     // Открытие drawer'а/секций — свежий статус моста (мог включить URIS, пока
-    // панель была закрыта; опрос дешёвый, глобал уже опубликован).
-    $(doc).on('click.diegetic', '#dg-ext .inline-drawer-toggle, #dg-ext summary', () => refreshUrisStatus());
+    // панель была закрыта; опрос дешёвый, глобал уже опубликован) и свежий
+    // список артефактов (панель монтируется до загрузки чата).
+    $(doc).on('click.diegetic', '#dg-ext .inline-drawer-toggle, #dg-ext summary', () => {
+        refreshUrisStatus();
+        renderArtifactList();
+    });
 
     ensureLauncher(deps.settings().buttonMode, deps.runLatest);
     render();
-    return { render };
+    // refreshArtifacts — точечное обновление списка артефактов без полной
+    // пересборки панели (полный render() восстановил бы textarea из хранилища
+    // и стёр несохранённый ввод пользователя).
+    return { render, refreshArtifacts: renderArtifactList };
 }
 
 /** Снять всё, что навесил ui.js (disable/clean). */

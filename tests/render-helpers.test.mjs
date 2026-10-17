@@ -4,7 +4,23 @@
 // под ним оставалась пустая область.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeIntrinsicHeight, ensureMsgButtons, initRender, shutdownRender, withSlotControls } from '../src/render.js';
+import { normalizeIntrinsicHeight, ensureMsgButtons, initRender, shutdownRender, withSlotControls, withImmersiveCss } from '../src/render.js';
+
+test('withImmersiveCss: документ с <head> — CSS после <head>', () => {
+    const out = withImmersiveCss('<html><head><title>t</title></head><body></body></html>');
+    assert.ok(/<head><style>/.test(out));
+});
+
+test('withImmersiveCss: без <head>, но с <html> — head синтезируется', () => {
+    const out = withImmersiveCss('<html lang="ru"><body>x</body></html>');
+    assert.ok(/<html lang="ru"><head><style>/.test(out));
+});
+
+test('withImmersiveCss: фрагмент без html/head — CSS в начало (регрессия: раньше терялся)', () => {
+    const out = withImmersiveCss('<div class="scene">x</div>');
+    assert.ok(out.startsWith('<style>'), 'иммерсивный CSS вставлен');
+    assert.ok(out.includes('<div class="scene">'), 'контент сохранён');
+});
 
 test('normalizeIntrinsicHeight: vh-ловушки высоты срезаются в auto', () => {
     const html = '<style>body{min-height:100vh}.stage{height:100svh}.cap{max-height:100dvh}</style>';

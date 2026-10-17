@@ -19,8 +19,8 @@ import { getChat, getMessage, listCmProfiles, persistChat, generateText } from '
 import { createPipeline, isExcluded } from './src/pipeline.js';
 import { createGenerationCoordinator } from './src/coordinator.js';
 import { createInitializationController } from './src/lifecycle.js';
-import { mountPanel, unmountUi } from './src/ui.js';
-import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating } from './src/render.js';
+import { mountPanel, unmountUi, collectRows } from './src/ui.js';
+import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating, deleteArtifact, clearImageCache } from './src/render.js';
 import { migrateCurrentChat } from './src/migrate.js';
 import { variantText, PAYLOAD_KEY } from './src/payload.js';
 import { urisStatus } from './src/images.js';
@@ -115,7 +115,7 @@ async function init(isCancelled = () => false) {
                     : null,
             httpAllowList: settings.httpAllowList,
         }),
-        notifyRender: (id) => { reconcileMessage(id); panelApi?.render(); },
+        notifyRender: (id) => { reconcileMessage(id); panelApi?.refreshArtifacts?.(); },
         // Шаблон резолвится по activeTemplate: встроенная основа — fetch, своя —
         // из именованного хранилища настроек (форма DS-Comments).
         resolveTemplate: async () => {
@@ -141,8 +141,10 @@ async function init(isCancelled = () => false) {
         const ctx = getCtx();
         try {
             if (typeof ctx?.callGenericPopup === 'function') {
-                const res = await ctx.callGenericPopup(text, 'confirm');
-                return res === true || res === 1 || res?.result === true;
+                // Второй аргумент — числовой POPUP_TYPE (строка попадает в
+                // default-ветку и рисует generic OK/Cancel).
+                const res = await ctx.callGenericPopup(text, ctx.POPUP_TYPE?.CONFIRM ?? 2);
+                return res === (ctx.POPUP_RESULT?.AFFIRMATIVE ?? 1) || res === true || res?.result === true;
             }
         } catch { /* фолбэк ниже */ }
         try { return globalThis.window?.confirm?.(text) === true; } catch { return false; }
@@ -214,7 +216,8 @@ async function init(isCancelled = () => false) {
         // Лаунчер и панельные кнопки идут через runBusy — busy-анимация на всех.
         runLatest: () => {
             const id = getLatestAssistantId();
-            if (id !== null && !coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
+            if (id === null) { toastr?.info?.('Diegetic: в чате нет поста ИИ'); return; }
+            if (!coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
         },
         getExclusions: () => String(chatData()?.exclusions ?? ''),
         setExclusions: (text) => {
@@ -237,6 +240,14 @@ async function init(isCancelled = () => false) {
         setCtxCharacter: (v) => { settings.ctxCharacter = v; save(); },
         setCtxWorld: (v) => { settings.ctxWorld = v; save(); },
         urisStatus,
+        // Подтверждение опасных действий панели (plain-HTTP endpoint, удаление шаблона).
+        confirmDanger,
+        // Панельный список артефактов чата: скан extra + регенерация/удаление.
+        listArtifacts: () => collectRows(getChat()),
+        runFor: (id) => {
+            if (!coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
+        },
+        removeArtifact: (msgId, artifactId) => { deleteArtifact(msgId, artifactId); },
     };
 
     try {
@@ -265,9 +276,7 @@ async function init(isCancelled = () => false) {
     });
 
     // Настройки редкие, но debounce хоста может не дожить до закрытия вкладки.
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') getCtx()?.saveSettingsDebounced?.();
-    });
+    document.addEventListener('visibilitychange', onVisibilityHidden);
 
     bindEvents(ctx);
     if (isCancelled()) return;
@@ -278,7 +287,19 @@ async function init(isCancelled = () => false) {
     log('готов');
 }
 
-function onMessageReceived(id) {
+// Служебные MESSAGE_RECEIVED (script.js: emit(..., id, type)): слэш-команды,
+// автовложения расширений, приветствия — не повод для автогенерации артефактов.
+// 'swipe'/'continue'/'append'/undefined — обычная генерация, их пропускаем.
+const SKIP_AUTOGEN_TYPES = new Set(['command', 'extension', 'impersonate', 'first_message']);
+
+// Именованный хендлер: cleanup() снимает его по ссылке, иначе каждый init()
+// добавлял бы ещё один слушатель (инвариант «полный cleanup»).
+function onVisibilityHidden() {
+    if (document.visibilityState === 'hidden') getCtx()?.saveSettingsDebounced?.();
+}
+
+function onMessageReceived(id, type) {
+    if (SKIP_AUTOGEN_TYPES.has(type)) return;
     try {
         const msg = getMessage(id);
         const prose = msg ? variantText(msg, msg.swipe_id ?? 0) : '';
@@ -296,6 +317,7 @@ function bindEvents(ctx) {
         [t.MESSAGE_EDITED, (id) => coordinator?.bumpMessageRevision(Number(id))],
         [t.CHAT_CHANGED, () => {
             coordinator?.invalidateAll();
+            clearImageCache(); // кэш data:-URL фото привязан к чату — не тащим в новый
             migrateCurrentChat().then(() => reconcile()).catch(() => {});
         }],
     ];
@@ -317,6 +339,7 @@ function unbindEvents() {
 function cleanup() {
     coordinator?.invalidateAll();
     unbindEvents();
+    document.removeEventListener('visibilitychange', onVisibilityHidden);
     try { unmountUi({ $: globalThis.jQuery ?? globalThis.$ }); } catch (e) { warn('ui cleanup:', e); }
     try { shutdownRender(); } catch (e) { warn('render cleanup:', e); }
 }
@@ -356,11 +379,10 @@ export async function onClean() {
             }
         }
         if (ctx?.chatMetadata?.dg) delete ctx.chatMetadata.dg;
-        const profileIds = ['source', ...(settings?.profiles ?? []).map(p => p.id)];
         if (ctx?.extensionSettings) delete ctx.extensionSettings.diegetic;
         ctx?.saveSettingsDebounced?.();
         ctx?.saveMetadataDebounced?.();
         await persistChat();
-        await Promise.allSettled(profileIds.map(id => setApiKey(id, '')));
+        await setApiKey('source', '');
     } catch (e) { warn('clean error:', e); }
 }

@@ -57,9 +57,6 @@ export async function getBuiltinTemplate(id = 'universal') {
     return _templates.get(file);
 }
 
-// Старый вызов — универсальный без фото.
-export const getUniversalTemplate = () => getBuiltinTemplate('universal');
-
 // Chat-scoped данные расширения (исключения, флаг миграции): chatMetadata.dg.
 export function chatData() {
     const ctx = getCtx();

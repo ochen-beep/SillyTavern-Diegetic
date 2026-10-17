@@ -85,7 +85,7 @@ async function generateViaCustom({ system, user, profile, signal }) {
         if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error('custom endpoint: «Доп. параметры» — должен быть JSON-объект');
     }
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(new Error('custom endpoint: таймаут 60 с')), 60_000);
+    const timer = setTimeout(() => ctrl.abort(new Error('custom endpoint: таймаут 5 мин')), 300_000);
     const onAbort = () => ctrl.abort(signal.reason);
     signal?.addEventListener('abort', onAbort, { once: true });
     try {

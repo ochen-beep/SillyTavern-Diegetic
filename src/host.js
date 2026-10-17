@@ -1,4 +1,4 @@
-// src/host.js — нативный транспортный слой поверх ctx SillyTavern.
+// Транспортный слой поверх ctx SillyTavern.
 // Всё общение с хостом (чат, генерация, CM, custom-endpoint) — только здесь;
 // pipeline/ui/render видят узкие функции и не знают про SillyTavern.getContext.
 
@@ -24,8 +24,7 @@ export function listCmProfiles() {
     return normalizeCmProfiles(Array.isArray(list) ? list : []);
 }
 
-// {{getvar::narlng}} и прочие макросы — подставляет ядро ST (раньше это молча
-// делал раннер, причём CM-ветка их НЕ подставляла — теперь одинаково везде).
+// {{getvar::...}} и прочие макросы подставляет ядро ST — одинаково для всех источников.
 function subst(ctx, text) {
     const s = String(text ?? '');
     try { return typeof ctx.substituteParams === 'function' ? ctx.substituteParams(s) : s; } catch { return s; }
@@ -40,8 +39,7 @@ async function generateViaCm({ system, user, profile, signal }) {
     const profileId = profile?.sourceConfig?.profileId;
     if (!profileId) throw new Error('В профиле не выбран профиль подключения');
     // CM мог ещё не наполнить профили к первому запросу — одна передышка;
-    // если и после неё список пуст, профиль не найдётся и через 4,5 с —
-    // фейлим сразу и понятно.
+    // если и после неё список пуст, фейлим сразу и понятно.
     if (listCmProfiles().length === 0) {
         await new Promise(r => setTimeout(r, 300));
         if (listCmProfiles().length === 0) {

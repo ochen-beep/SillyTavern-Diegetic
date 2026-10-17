@@ -1,8 +1,5 @@
-// src/migrate.js — одноразовая миграция legacy-формата (фенсы ```html в тексте
-// сообщения) в extra-модель. Идемпотентна: флаг chatMetadata.dg.migrated.
-//
-// Здесь же живут strip-хелперы бывшего paragraph.js — больше они нигде не нужны:
-// в нативной модели текст сообщения чист по построению.
+// Одноразовая миграция legacy-формата (фенсы ```html в тексте сообщения)
+// в extra-модель. Идемпотентна: флаг chatMetadata.dg.migrated.
 
 import { getCtx, chatData, saveChatData } from './core.js';
 import { persistChat } from './host.js';

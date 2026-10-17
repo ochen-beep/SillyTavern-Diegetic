@@ -1,7 +1,6 @@
-// src/images.js
 // Фотослоты внутри артефактов: <div data-dg-img="trigger: описание">…CSS-плейсхолдер…</div>.
-// Модуль разделён на чистую часть (парсинг и строковая хирургия — покрыты тестами в node)
-// и обёртку над мостом URIS (globalThis.URIS — то же окно, что и мы).
+// Чистая часть — парсинг и строковая хирургия; обёртка над мостом URIS
+// (globalThis.URIS — то же окно) — в конце файла.
 
 export const SLOT_ATTR = 'data-dg-img';
 export const SLOT_STATE_ATTR = 'data-dg-img-state';
@@ -182,7 +181,6 @@ export function replaceSlotImage(text, ordinal, imagePath, cardId = null) {
 }
 
 // ── Мост URIS (не чистая часть: трогает globalThis) ──
-// Нативный режим: одно окно с UR Image Studio, window.parent-хоп больше не нужен.
 
 export function getUrisBridge() {
     try { return globalThis.URIS ?? null; } catch { return null; }

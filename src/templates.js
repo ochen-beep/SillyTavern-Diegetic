@@ -1,9 +1,8 @@
-// src/templates.js — именованные шаблоны в настройках расширения (форма
-// DS-Comments settings-sync): { name: text } внутри extension settings —
-// синк сервером, переживают перезагрузки страницы/сервера и видны во всех
-// браузерах. Встроенные основы (templates/*.md) под замком: их нельзя
-// перезаписать или удалить, только «сохранить как». Чистые функции над
-// объектом настроек — мутации возвращают новый объект, save() у вызывающего.
+// Именованные шаблоны в настройках расширения: { name: text } внутри
+// extension settings — синк сервером, видны во всех браузерах. Встроенные
+// основы (templates/*.md) под замком: их нельзя перезаписать или удалить,
+// только «сохранить как». Чистые функции над объектом настроек — мутации
+// возвращают новый объект, save() у вызывающего.
 
 export const BUILTIN_TEMPLATES = Object.freeze({
     universal: 'Универсальный',
@@ -42,7 +41,7 @@ export function saveTemplate(settings, name, text) {
     return { ...settings, templates: { ...userTemplates(settings), [name]: String(text ?? '') } };
 }
 
-/** Сохранить как новое имя и сразу выбрать его (DS savePromptAs). */
+/** Сохранить как новое имя и сразу выбрать его. */
 export function saveTemplateAs(settings, name, text) {
     const clean = String(name ?? '').trim();
     if (!clean || isBuiltinTemplate(clean)) return null;

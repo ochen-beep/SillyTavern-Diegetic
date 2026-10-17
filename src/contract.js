@@ -27,8 +27,7 @@ const CONTRACT_SIGNATURE = '### TOOL — DIEGETIC HTML';
 
 /**
  * Раздельная сборка: system = шаблон+контракт, user = контекст+пост.
- * Формат для ConnectionManagerRequestService.sendRequest (source 'profile');
- * assemblePrompt — это те же части, склеенные в одну строку для generateRaw.
+ * assemblePrompt — те же части, склеенные в одну строку для generateRaw.
  * Идемпотентно: контракт вставляется ровно один раз — по {{CONTRACT}}, а если
  * плейсхолдера нет и контракт уже вписан в шаблон текстом, повторно не дописывается.
  */

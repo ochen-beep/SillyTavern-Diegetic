@@ -1,8 +1,7 @@
-// src/pipeline.js — оркестрация генерации и фотослотов.
-// Нативная модель: артефакты живут в extra сообщения (payload.js), текст поста
-// не трогается никогда. Commit-гард — coordinator.isCurrent + digest прозы.
-// Текст не перезаписываем, поэтому весь класс гонок «перезаписали чужую правку»
-// сведён к сверке digest перед записью payload.
+// Оркестрация генерации и фотослотов.
+// Артефакты живут в файловом хранилище (payload.js), текст поста не трогается
+// никогда — поэтому весь класс гонок «перезаписали чужую правку» сведён
+// к commit-гарду: coordinator.isCurrent + сверка digest прозы перед записью.
 
 import { contentDigest, isViableMessageText } from './digest.js';
 import { findAnchorInText, findFuzzySpan } from './anchor.js';
@@ -57,7 +56,7 @@ export function createPipeline(deps) {
         try {
             // Дескриптор источника собирает хост (index.js) из настроек.
             const profile = deps.getSourceProfile();
-            // resolveTemplate async: встроенный шаблон тянется fetch'ем (core.js)
+            // resolveTemplate async: встроенный шаблон тянется fetch'ем (core.js).
             const templateText = await deps.resolveTemplate(profile);
             const { system, user } = assemblePromptParts({
                 templateText, postText: prose,
@@ -85,7 +84,7 @@ export function createPipeline(deps) {
                 notify.error(`Diegetic: отброшено ${parsed.errors.length} из ответа (${parsed.errors.join('; ')})`);
             }
 
-            // Якорная валидация против сырой прозы — как раньше.
+            // Якорная валидация против сырой прозы.
             const recorded = parsed.artifacts.map((art, i) => {
                 let status = 'ok';
                 let span = art.anchor ? findAnchorInText(prose, art.anchor) : null;

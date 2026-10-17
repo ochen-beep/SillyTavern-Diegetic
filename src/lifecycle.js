@@ -1,5 +1,4 @@
-// src/lifecycle.js — сериализация init-прогонов + токен отмены.
-// Вербатим-порт Glosses src/runtime/lifecycle.js: ST ждёт промисы хуков,
+// Сериализация init-прогонов + токен отмены. ST ждёт промисы хуков,
 // но сигнала отмены расширению не даёт — токен локальный.
 export function createInitializationController(run) {
     let generation = 0;

@@ -1,5 +1,5 @@
 /**
- * Владение прогоном генерации (порт Glosses generation-coordinator).
+ * Владение прогоном генерации.
  *
  * Identity model (state self-contained — свой счётчик и слоты вместо общих):
  *   - chatEpoch (epoch) — счётчик «жизни чата», растёт ТОЛЬКО на смену чата /

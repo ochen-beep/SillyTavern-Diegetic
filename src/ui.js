@@ -110,6 +110,8 @@ const CSS = `
 .dg-chip, .dg-chip-action { cursor: pointer; border-radius: 8px; padding: 6px 14px; font-size: 13px;
   border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.2));
   background: var(--black30, rgba(0,0,0,.25)); color: var(--SmartThemeBodyColor, #ddd); }
+/* Иконочные действия артефакта — компактнее текстовых чипов */
+.dg-chip-action { padding: 6px 10px; }
 .dg-chip { font-weight: 600; }
 .dg-chip:hover, .dg-chip-action:hover { border-color: var(--SmartThemeEmColor, #c9a86a); }
 

@@ -1,11 +1,10 @@
-// src/context.js — доп. контекст генерации (форма DS-Comments: persona /
-// character card / активированный лор через dry-run скан ST). Чистая сборка
-// блоков вынесена в formatContextParts — покрыта node-тестами; сбор данных —
-// collectContext, живёт у хоста и никогда не бросает.
+// Доп. контекст генерации: персона, карточка персонажа, активированный лор.
+// formatContextParts — чистая сборка блоков; collectContext ходит к хосту
+// и никогда не бросает.
 //
-// КОНТРАКТ DRY-RUN (как в DS lorebooks.js): ctx.getWorldInfoPrompt вызывается
-// ТОЛЬКО с isDryRun=true — обычный скан переэмиссил бы WORLD_INFO_ACTIVATED и
-// писал sticky/cooldown-эффекты в chat_metadata вне цикла генерации ST.
+// ctx.getWorldInfoPrompt вызывается ТОЛЬКО с isDryRun=true: обычный скан
+// переэмиссил бы WORLD_INFO_ACTIVATED и писал sticky/cooldown-эффекты
+// в chat_metadata вне цикла генерации ST.
 
 export const LORE_SCAN_MAX_CONTEXT = 100000;
 

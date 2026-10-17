@@ -237,18 +237,20 @@ function buildActionRow({ collapse = false } = {}) {
     copy.type = 'button';
     copy.className = 'dg-chip-action';
     copy.setAttribute('data-dg-copy', '');
-    copy.textContent = '⧉ Копировать';
+    copy.title = 'Копировать HTML';
+    copy.textContent = '⧉';
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'dg-chip-action';
     save.setAttribute('data-dg-save', '');
     save.title = 'Сохранить как .html — открыть в браузере и потыкать';
-    save.textContent = '⤓ Файл';
+    save.textContent = '⤓';
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'dg-chip-action';
     del.setAttribute('data-dg-del', '');
-    del.textContent = '✕ Удалить';
+    del.title = 'Удалить артефакт из поста';
+    del.textContent = '✕';
     row.append(copy, save, del);
     return row;
 }

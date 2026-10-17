@@ -28,10 +28,9 @@ export function isWordChar(ch) {
 
 /**
  * Grapheme-aware normalization with a position map back into the source
- * string. Shared by the flat-text matcher (findAnchorInText), the DOM text
- * index (text-index.js), and the fuzzy resolver so every surface applies the
- * SAME normalization policy (NFC, case, quotes/dashes, whitespace collapse)
- * with UTF-16 source spans as the common currency.
+ * string. Shared by the flat-text matcher and the fuzzy resolver so every
+ * surface applies the same normalization policy (NFC, case, quotes/dashes,
+ * whitespace collapse) with UTF-16 source spans as the common currency.
  */
 export function normalizedWithMap(value) {
     const source = String(value ?? '');
@@ -56,7 +55,7 @@ export function normalizedWithMap(value) {
             units.push({ ch: ' ', start: pendingSpace.start, end: pendingSpace.end });
             pendingSpace = null;
         }
-        // deviation from Glosses: expand astral chars per code unit so map aligns with indexOf offsets
+        // Astral chars expand per code unit so the map aligns with indexOf offsets.
         for (const ch of normalized) {
             for (let u = 0; u < ch.length; u++) units.push({ ch: ch[u], start: part.start, end: part.end });
         }

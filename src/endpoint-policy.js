@@ -1,7 +1,6 @@
-// src/endpoint-policy.js — политика кастомного эндпоинта (форма HTML-Inserts
-// infrastructure/endpoint-policy.js): без учётных данных в URL, https или
+// Политика кастомного эндпоинта: без учётных данных в URL, https или
 // loopback; plain-HTTP вне localhost — только по явному allowlist-origin.
-// Чистые функции, покрыты тестами; confirm-UI живёт у вызывающего (index.js).
+// Чистые функции; confirm-UI живёт у вызывающего (index.js).
 
 export function classifyEndpoint(raw) {
     const input = String(raw ?? '').trim();

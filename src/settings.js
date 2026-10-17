@@ -1,4 +1,3 @@
-// src/settings.js
 import { isBuiltinTemplate as isBuiltinName, DEFAULT_TEMPLATE } from './templates.js';
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -15,9 +14,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     ctxPersona: true,          // персона {{user}} в контексте генерации
     ctxCharacter: true,        // описание персонажа в контексте
     ctxWorld: true,            // активированные лорбуки (dry-run скан ST) в контексте
-    templates: {},             // именованные шаблоны { name: text } — сервер-синк (форма DS-Comments)
+    templates: {},             // именованные шаблоны { name: text } — сервер-синк
     activeTemplate: DEFAULT_TEMPLATE,
-    // Источник генерации (форма DS-Comments): один выбор, без списка профилей.
+    // Источник генерации: один выбор, без списка профилей.
     source: 'profile',         // 'profile' | 'custom' ('current' выпилен — мигрирует в 'profile')
     cmProfile: null,           // { profileId, profileName } — профиль Connection Manager
     custom: { apiurl: '', model: '' }, // свой endpoint; ключ — в localforage, не здесь
@@ -62,7 +61,7 @@ const legacyTemplatesFromProfiles = (raw) => {
 };
 
 // Переезд источника: профильный список (activeProfile + sourceConfig) →
-// одна тройка source/cmProfile/custom (форма DS-Comments).
+// одна тройка source/cmProfile/custom.
 const legacySourceFromProfiles = (raw) => {
     if (raw.source !== undefined || !Array.isArray(raw.profiles) || !raw.profiles.length) return null;
     const p = raw.profiles.find(x => x && x.id === raw.activeProfile) || raw.profiles[0];

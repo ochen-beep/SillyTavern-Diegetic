@@ -1,7 +1,6 @@
-// Чистая логика источника «профиль подключения» (SillyTavern Connection Manager),
-// по принципу расширения DS-Comments: профили читаются из настроек расширения
-// connection-manager, генерация идёт через ConnectionManagerRequestService.sendRequest.
-// Хост-обвязка — в host.js; здесь только тестируемое.
+// Чистая логика источника «профиль Connection Manager»: профили из настроек
+// расширения connection-manager, генерация через ConnectionManagerRequestService.
+// Хост-обвязка — в host.js.
 
 /**
  * Нормализация списка CM-профилей до [{ id, name }]. Профиль без id и без name

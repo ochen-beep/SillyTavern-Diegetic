@@ -1,6 +1,6 @@
-// src/core.js — доступ к хосту ST, хранилище настроек, кэш шаблона, ключ API.
-// Нативный режим: расширение живёт в главном окне, контекст — через
-// SillyTavern.getContext(). Никаких обращений к ядру по относительным путям.
+// Доступ к хосту ST, хранилище настроек, кэш шаблона, ключ API.
+// Расширение живёт в главном окне, контекст — через SillyTavern.getContext().
+// Никаких обращений к ядру по относительным путям.
 
 export const MODULE_NAME = 'diegetic';
 
@@ -8,8 +8,7 @@ export function getCtx() {
     try { return globalThis.SillyTavern?.getContext?.() ?? null; } catch { return null; }
 }
 
-// Шов хранения для settings.js: extensionSettings.diegetic (JSON-строка —
-// интерфейс {get,set} settings.js намеренно не менялся при переезде).
+// Шов хранения для settings.js: extensionSettings.diegetic, интерфейс {get,set}.
 export const settingsStorage = {
     get() {
         try { return getCtx()?.extensionSettings?.[MODULE_NAME]; } catch { return undefined; }
@@ -22,7 +21,7 @@ export const settingsStorage = {
     },
 };
 
-// Ключ custom-эндпоинта — в localforage, не в settings.json (форма Glosses/DS):
+// Ключ custom-эндпоинта — в localforage, не в settings.json:
 // settings.json читается сервером, localforage не покидает браузер.
 const lf = () => { try { return globalThis.SillyTavern?.libs?.localforage ?? null; } catch { return null; } };
 

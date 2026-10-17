@@ -231,6 +231,15 @@ function buildActionRow({ collapse = false } = {}) {
     return row;
 }
 
+// SillyTavern отдаёт страницу с CSP, под которым srcdoc-iframe не грузится
+// (about:srcdoc не попадает в frame-src) — рендерим артефакты через blob: URL.
+function mountFrameHtml(frame, html) {
+    if (frame.dataset.dgBlob) URL.revokeObjectURL(frame.dataset.dgBlob);
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+    frame.dataset.dgBlob = url;
+    frame.src = url;
+}
+
 function buildShell(artifact, key, msgId) {
     const open = isOpen(artifact);
     const shell = document.createElement('div');
@@ -253,12 +262,12 @@ function buildShell(artifact, key, msgId) {
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.setAttribute('title', String(artifact.type || 'artifact'));
     const html = patchStoredArtifact(artifact.html);
-    const srcdoc = () => withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET + CMD_SNIPPET;
-    frame.srcdoc = srcdoc();
+    const frameHtml = () => withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET + CMD_SNIPPET;
+    mountFrameHtml(frame, frameHtml());
     shell.appendChild(frame);
     // Догреть кэш фото и перелить в iframe, когда data: готовы.
     warmImages(html).then(() => {
-        if (frame.isConnected) frame.srcdoc = srcdoc();
+        if (frame.isConnected) mountFrameHtml(frame, frameHtml());
     });
     // Expand-режим: меню живёт вместе с развёрнутым артефактом — свернуть /
     // скопировать / сохранить / удалить, а не исчезать после раскрытия.
@@ -339,10 +348,10 @@ function openPopup(artifact, msgId = null) {
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
     const html = withImmersiveCss(patchStoredArtifact(String(artifact.html)));
-    const srcdoc = () => withCachedImages(html) + CMD_SNIPPET;
-    frame.srcdoc = srcdoc();
+    const frameHtml = () => withCachedImages(html) + CMD_SNIPPET;
+    mountFrameHtml(frame, frameHtml());
     warmImages(html).then(() => {
-        if (overlay.isConnected) frame.srcdoc = srcdoc();
+        if (overlay.isConnected) mountFrameHtml(frame, frameHtml());
     });
     overlay.querySelector('.dg-popup-dialog').appendChild(frame);
     overlay.addEventListener('click', (e) => { if (e.target.closest('[data-dg-close]')) closePopup(); });

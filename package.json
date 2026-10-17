@@ -1,13 +1,13 @@
 {
   "name": "diegetic",
-  "version": "1.2.1",
+  "version": "0.0.1-alpha",
   "private": true,
   "engines": {
     "node": ">=21"
   },
   "type": "module",
   "description": "Diegetic artifacts — нативное расширение SillyTavern",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "test": "node --test tests/**/*.test.mjs"
   }

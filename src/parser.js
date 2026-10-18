@@ -121,6 +121,11 @@ export function parseDiegeticResponse(raw, { maxBytes = 32768, maxCount = 5 } = 
         if (byteLength(html) > maxBytes) { errors.push(`artifact "${meta.type || '?'}": ${byteLength(html)} bytes > maxBytes`); continue; }
         artifacts.push({ type: String(meta.type || 'unknown'), anchor: String(meta.anchor || ''), html });
     }
+    // Обрезка сверх лимита — тоже «отброшено»: попадает в errors, чтобы тост
+    // показывал, почему при «N артефактов» в ответе их меньше.
     const kept = artifacts.slice(0, Math.max(1, maxCount));
+    if (artifacts.length > kept.length) {
+        errors.push(`maxCount: ${artifacts.length - kept.length} over limit ${maxCount}`);
+    }
     return { artifacts: kept, errors };
 }

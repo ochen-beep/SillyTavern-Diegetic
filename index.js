@@ -90,6 +90,8 @@ async function init(isCancelled = () => false) {
     const toastr = globalThis.toastr;
     const notify = {
         ready: (m) => { if (settings.appearance !== 'silent') toastr?.success(m); },
+        // Потеря оплаченного ответа — не шум: warning показывается и в silent-режиме.
+        warn: (m) => toastr?.warning(m),
         error: (m) => toastr?.error(m),
     };
 

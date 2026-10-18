@@ -284,3 +284,30 @@ test('fillImageSlots: аборт прогона (свайп/правка) отм
         assert.ok(!readVerifiedPayload(msg, 0).artifacts[0].html.includes('data-dg-img-state'), 'слот сброшен из loading');
     } finally { delete globalThis.URIS; }
 });
+
+// ── Тихие сбросы завершённого ответа: должны шуметь warn-тостом ──
+
+test('устаревший прогон: ответ пришёл после свайпа/правки — warn, payload не записан', async () => {
+    const { deps, msg, notifications } = makeDeps();
+    deps.notify.warn = (m) => notifications.push(['warn', m]);
+    // Транспорт, игнорирующий AbortSignal (напр. CM): ответ дошёл, но прогон
+    // уже сменился правкой/свайпом за время генерации.
+    deps.generateText = async () => { deps.coordinator.bumpMessageRevision(0); return RESP; };
+    await createPipeline(deps).run(0);
+    assert.equal(readRawPayload(msg, 0), null, 'оплаченный ответ не переписывает чужой вариант');
+    assert.ok(notifications.some(([k, m]) => k === 'warn' && /не записан/.test(m)), 'потеря ответа не молчалива');
+    assert.ok(!notifications.some(([k]) => k === 'ready'));
+});
+
+test('пост изменился за время генерации без ревизии — warn, payload не записан', async () => {
+    const { deps, msg, notifications } = makeDeps();
+    deps.notify.warn = (m) => notifications.push(['warn', m]);
+    deps.generateText = async () => {
+        msg.mes = PROSE + ' Дописано.'; // прямая мутация мимо MESSAGE_EDITED
+        msg.swipes[0] = msg.mes;
+        return RESP;
+    };
+    await createPipeline(deps).run(0);
+    assert.equal(readRawPayload(msg, 0), null, 'дайджест не совпал — запись не прошла');
+    assert.ok(notifications.some(([k, m]) => k === 'warn' && /не записан/.test(m)));
+});

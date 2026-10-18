@@ -166,3 +166,30 @@ test('кнопка поста читает mesid в момент клика, а 
         delete globalThis.MutationObserver;
     }
 });
+
+// ── resolveMountBlock: якорь валиден по прозе, но по блокам DOM не находится ──
+// Регрессия «артефакт записан, а в посте его нет»: цитата через границу абзацев
+// проходит валидацию в пайплайне (нормализация схлопывает \n\n), а в рендере
+// абзацы — разные узлы; locateBlock давал null и оболочка молча не монтировалась.
+import { resolveMountBlock } from '../src/render.js';
+
+const textEl = { tagName: 'DIV', textContent: 'весь пост' };
+const blocks = [
+    { tagName: 'P', textContent: 'Первый абзац кончается этими словами.' },
+    { tagName: 'P', textContent: 'Второй абзац начинается вот так.' },
+];
+
+test('resolveMountBlock: обычный якорь — свой блок', () => {
+    const art = { anchor: 'начинается вот так' };
+    assert.equal(resolveMountBlock(blocks, art, textEl), blocks[1]);
+});
+
+test('resolveMountBlock: межабзацный якорь — фолбэк в конец поста, не null', () => {
+    const art = { anchor: 'кончается этими словами. Второй абзац начинается' };
+    assert.equal(resolveMountBlock(blocks, art, textEl), textEl);
+});
+
+test('resolveMountBlock: пустой/невалидный якорь — фолбэк в конец поста', () => {
+    assert.equal(resolveMountBlock(blocks, { anchor: '  ' }, textEl), textEl);
+    assert.equal(resolveMountBlock(blocks, { anchor: 'такого текста в посте нет вовсе' }, textEl), textEl);
+});

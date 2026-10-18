@@ -129,3 +129,11 @@ test('валидная пара после битой тоже парсится'
   assert.deepEqual(r.artifacts.map(a => a.type), ['note']);
   assert.ok(r.errors.some(e => e.startsWith('bad meta JSON')));
 });
+
+test('maxCount-обрезка не молчалива: error-запись с числом лишних', () => {
+  const three = okPair + '\n' + `<!--DIEGETIC {"type":"b","anchor":"x"}-->\n\`\`\`html\n<body>2</body>\n\`\`\``
+      + '\n' + `<!--DIEGETIC {"type":"c","anchor":"x"}-->\n\`\`\`html\n<body>3</body>\n\`\`\``;
+  const r = parseDiegeticResponse(three, { maxCount: 1 });
+  assert.equal(r.artifacts.length, 1);
+  assert.ok(r.errors.some(e => /maxCount: 2 over limit 1/.test(e)), 'обрезанные артефакты видны в errors');
+});

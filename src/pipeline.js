@@ -70,7 +70,12 @@ export function createPipeline(deps) {
                 if (e?.name !== 'AbortError') notify.error(`Diegetic: генерация не удалась (${e?.message || e})`);
                 return;
             }
-            if (!deps.coordinator.isCurrent(run)) return;
+            if (!deps.coordinator.isCurrent(run)) {
+                // Ответ пришёл, а прогон устарел (свайп/правка/новый запуск за
+                // время генерации): оплаченный ответ выбрасывается — не молчать.
+                notify.warn?.('Diegetic: ответ не записан — прогон устарел (свайп, правка или новый запуск)');
+                return;
+            }
 
             const parsed = parseDiegeticResponse(raw, { maxBytes: s.maxArtifactBytes, maxCount: s.maxPerMessage });
             if (parsed.artifacts.length === 0) {
@@ -98,7 +103,13 @@ export function createPipeline(deps) {
 
             // Commit-гард: прогон актуален и проза не сменилась за время генерации.
             const live = deps.getMessage(messageId);
-            if (!live || !deps.coordinator.isCurrent(run) || digestForVariant(live, swipeIdx) !== proseDigest) return;
+            if (!live || !deps.coordinator.isCurrent(run) || digestForVariant(live, swipeIdx) !== proseDigest) {
+                // Здесь попадают только завершённые ответы — терять их молча нельзя.
+                notify.warn?.(!live
+                    ? 'Diegetic: ответ не записан — пост исчез за время генерации'
+                    : 'Diegetic: ответ не записан — пост изменился за время генерации');
+                return;
+            }
 
             const payload = stampPayload(live, swipeIdx, recorded);
             if (!payload || !writePayload(live, swipeIdx, payload)) return;

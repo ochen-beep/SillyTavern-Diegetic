@@ -219,6 +219,17 @@ function locateBlock(blocks, artifact) {
     return null;
 }
 
+/**
+ * Блок-владелец для монтажа. Якорь уже валидирован по сырой прозе пайплайном,
+ * но по блокам отрендеренного текста может не найтись: цитата через границу
+ * абзацев (нормализация схлопывает \n\n, а в DOM абзацы — разные узлы),
+ * markdown-перекраска фрагмента. Прятать оплаченный артефакт молча нельзя —
+ * фолбэк: конец поста.
+ */
+export function resolveMountBlock(blocks, artifact, textEl) {
+    return locateBlock(blocks, artifact) ?? textEl;
+}
+
 const escAttr = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /** Строка действий чипа: Collapse виден только у развёрнутого (expand). */
@@ -606,8 +617,7 @@ function reconcileMes(mesEl) {
     const blocks = blocksOf(textEl);
     for (const [key, artifact] of desired) {
         if (have.has(key)) continue;
-        const block = locateBlock(blocks, artifact);
-        if (block) mountShell(block, artifact, key, textEl, msgId);
+        mountShell(resolveMountBlock(blocks, artifact, textEl), artifact, key, textEl, msgId);
     }
 }
 

@@ -47,6 +47,13 @@ const CSS = `
 #dg-ext .dg-row input[type=number].text_pole { min-width: 72px; text-align: right; }
 #dg-ext .dg-sub { grid-column: 1 / -1; padding-left: 42px; opacity: .55; font-size: 12px; }
 
+/* Вертикальная форма (свой endpoint): подпись над полем на всю ширину —
+   иначе длинные URL/ключи зажимаются в узкую правую колонку грида dg-row */
+#dg-ext .dg-fields { display: flex; flex-direction: column; gap: 3px; padding: 6px 0 2px; }
+#dg-ext .dg-fields label { font-size: 12px; opacity: .6; margin-top: 5px; cursor: pointer; }
+#dg-ext .dg-fields label:first-child { margin-top: 0; }
+#dg-ext .dg-fields .text_pole { width: 100%; min-width: 0; box-sizing: border-box; }
+
 /* Свитч: мгновенное действие, состояние видно без сохранения */
 #dg-ext .dg-switch { position: relative; width: 34px; height: 19px; flex: none; cursor: pointer; }
 #dg-ext .dg-switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
@@ -84,12 +91,17 @@ const CSS = `
   color: var(--black300, #16161a); opacity: 1; font-weight: 600; }
 #dg-ext .dg-seg-btn:focus-visible { outline: 2px solid var(--SmartThemeEmColor, #c9a86a); outline-offset: 1px; }
 
-/* Список артефактов чата */
+/* Список артефактов чата: скролл внутри секции, окно настроек не растягивается.
+   overscroll-behavior не отпускает прокрутку наружу, когда список кончился. */
+#dg-ext #dg-art-list { max-height: 300px; overflow-y: auto; overscroll-behavior: contain;
+  padding-right: 4px; }
 #dg-ext .dg-art-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
   border-top: 1px solid var(--black30a, rgba(128,128,128,.14)); font-size: 12.5px; }
 #dg-ext .dg-art-row:first-of-type { border-top: none; }
 #dg-ext .dg-art-status { flex: none; width: 10px; text-align: center; }
-#dg-ext .dg-art-type { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dg-ext .dg-art-type { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer; }
+#dg-ext .dg-art-type:hover { color: var(--SmartThemeEmColor, #c9a86a); }
 #dg-ext .dg-art-meta { flex: 1; opacity: .55; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #dg-ext .dg-art-btn { flex: none; cursor: pointer; padding: 2px 8px; font-size: 12px;
   border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.2)); border-radius: 6px;
@@ -120,7 +132,9 @@ const CSS = `
    обёртки других расширений), и fixed-оверлей с auto-высотой получает
    0px — диалог уезжает центр-верх за экран. Явные lvw/lvh снимают
    зависимость от бокса корня; vh-фолбэк для старых движков. */
-.dg-popup { position: fixed; inset: 0; z-index: 2999; display: flex; align-items: center;
+/* z-index выше #top-settings-holder (3005/4005): из «Библиотеки» в настройках
+   попап иначе открывается ЗА панелью настроек. */
+.dg-popup { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center;
   justify-content: center; width: 100vw; height: 100vh; width: 100lvw; height: 100lvh; }
 .dg-popup-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
 /* Колонка: шапка сверху во всю ширину, артефакт ниже. Без column iframe на
@@ -189,15 +203,25 @@ const ART_STATUS = {
     stale: { color: '#9cf', label: 'текст поста менялся — перепривяжется при отрисовке' },
 };
 
+/** Дата артефакта для панели: дд.мм чч:мм по локали, без года и секунд. */
+const artDate = (ts) => {
+    const d = Number(ts);
+    if (!Number.isFinite(d) || d <= 0) return '';
+    try {
+        return new Date(d).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch { return ''; }
+};
+
 /** Чистая: HTML строк панельного списка артефактов чата. */
 export function artifactListHtml(rows) {
     if (!rows?.length) return '<p class="dg-hint">в этом чате артефактов пока нет</p>';
     return rows.map((a) => {
         const st = ART_STATUS[a.status] ?? ART_STATUS.ok;
+        const date = artDate(a.createdAt);
         return `<div class="dg-art-row" data-msg="${Number(a.msgId)}" data-art="${esc(a.id)}">`
             + `<span class="dg-art-status" style="color:${st.color}" title="${esc(st.label)}">●</span>`
-            + `<span class="dg-art-type">${esc(a.type || 'artifact')}</span>`
-            + `<span class="dg-art-meta">пост #${Number(a.msgId)}</span>`
+            + `<span class="dg-art-type" data-art-open title="Предпросмотр">${esc(a.type || 'artifact')}</span>`
+            + `<span class="dg-art-meta">пост #${Number(a.msgId)}${date ? ` · ${date}` : ''}</span>`
             + '<button type="button" class="dg-art-btn" data-art-open title="Открыть во всплывающем окне">👁</button>'
             + '<button type="button" class="dg-art-btn" data-art-save title="Сохранить как .html">⤓</button>'
             + '<button type="button" class="dg-art-btn" data-art-regen title="Перегенерировать артефакты поста">⟳</button>'
@@ -552,15 +576,15 @@ export function mountPanel(deps) {
             : '<p class="dg-hint">Расширение connection-manager не найдено или в нём нет профилей.</p>'}
         </div>
         <div id="dg-src-custom" hidden>
-          <div class="dg-row"><label for="dg-apiurl">URL</label>
-            <input id="dg-apiurl" type="text" class="text_pole" value="${esc(deps.getCustom().apiurl)}" placeholder="https://…/v1"/></div>
-          <div class="dg-row"><label for="dg-model">Модель</label>
-            <input id="dg-model" type="text" class="text_pole" value="${esc(deps.getCustom().model)}" placeholder="необязательно"/></div>
-          <div class="dg-row"><label for="dg-key">Ключ</label>
-            <input id="dg-key" type="password" class="text_pole" value="" placeholder="sk-… (хранится в браузере)"/></div>
+          <div class="dg-fields">
+            <label for="dg-apiurl">URL</label>
+            <input id="dg-apiurl" type="text" class="text_pole" value="${esc(deps.getCustom().apiurl)}" placeholder="https://…/v1"/>
+            <label for="dg-model">Модель</label>
+            <input id="dg-model" type="text" class="text_pole" value="${esc(deps.getCustom().model)}" placeholder="необязательно"/>
+            <label for="dg-key">Ключ</label>
+            <input id="dg-key" type="password" class="text_pole" value="" placeholder="sk-… (хранится в браузере)"/>
+          </div>
           <div class="dg-btnrow"><button class="menu_button dg-btn-primary" id="dg-save-source">Применить</button></div>
-          <p class="dg-hint">https — свободно; plain-HTTP вне localhost спросит подтверждение
-            и попадёт в список разрешённых. Ключ живёт в localforage браузера, не в settings.json.</p>
         </div>
         <div class="dg-row"><label for="dg-extrabody">Доп. параметры запроса (JSON)</label>
           <input id="dg-extrabody" type="text" class="text_pole" value="${esc(deps.getCustom().extraBody)}" placeholder='{"reasoning_effort":"none"}' style="min-width:230px"/></div>

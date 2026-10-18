@@ -77,7 +77,7 @@ export function createPipeline(deps) {
                 return;
             }
 
-            const parsed = parseDiegeticResponse(raw, { maxBytes: s.maxArtifactBytes, maxCount: s.maxPerMessage });
+            const parsed = parseDiegeticResponse(raw, { maxCount: s.maxPerMessage });
             if (parsed.artifacts.length === 0) {
                 // Контракт запрещает отказ, так что это именно сбой модели.
                 notify.error(`Diegetic: модель не вернула артефакт (${parsed.errors[0] || 'нет пар комментарий+fence'})`);

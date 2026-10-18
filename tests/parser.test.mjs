@@ -51,10 +51,12 @@ test('валидации: без <body — ошибка, артефакт отб
   assert.ok(r.errors.length >= 1);
 });
 
-test('валидации: размер > maxBytes — отброшен', () => {
-  const big = `<!--DIEGETIC {"anchor":"x"}-->\n\`\`\`html\n<body>${'x'.repeat(100)}</body>\n\`\`\``;
-  const r = parseDiegeticResponse(big, { maxBytes: 50 });
-  assert.equal(r.artifacts.length, 0);
+test('размер артефакта не ограничен: больше прежних 32 КБ — сохраняется', () => {
+  // Регрессия «33937 bytes > maxBytes»: уплаченный ответ не должен отбрасываться
+  const big = `<!--DIEGETIC {"type":"dashboard","anchor":"x"}-->\n\`\`\`html\n<body>${'x'.repeat(33937)}</body>\n\`\`\``;
+  const r = parseDiegeticResponse(big, {});
+  assert.equal(r.artifacts.length, 1);
+  assert.equal(r.errors.length, 0);
 });
 
 test('валидации: ``` внутри — отброшен', () => {

@@ -51,10 +51,6 @@ export function repairJson(raw) {
     return null;
 }
 
-function byteLength(str) {
-    return new TextEncoder().encode(str).length;
-}
-
 /**
  * Извлекает html из ```html-фенса в сегменте текста (от комментария до следующего
  * комментария или конца ответа). Ленивая regex-выборка здесь не годится: содержимое
@@ -82,9 +78,10 @@ function extractFence(segment) {
  * { artifacts: [{type, anchor, html}], errors: string[] }.
  * Контракт запрещает отказ, поэтому «мусорный» ответ — это просто errors
  * без артефактов; отдельной семантики «нет» не существует.
- * Опции: { maxBytes = 32768, maxCount = 5 }.
+ * Размер артефакта не ограничен: уплаченный ответ обязан сохраняться всегда.
+ * Опции: { maxCount = 5 }.
  */
-export function parseDiegeticResponse(raw, { maxBytes = 32768, maxCount = 5 } = {}) {
+export function parseDiegeticResponse(raw, { maxCount = 5 } = {}) {
     const text = String(raw ?? '');
     const errors = [];
     COMMENT_RE.lastIndex = 0;
@@ -118,7 +115,6 @@ export function parseDiegeticResponse(raw, { maxBytes = 32768, maxCount = 5 } = 
         if (fence.error) { errors.push(`${fence.error} near index ${cm.index}`); continue; }
         const html = String(fence.html ?? '').trim();
         if (!/<body/i.test(html)) { errors.push(`artifact "${meta.type || '?'}": no <body>`); continue; }
-        if (byteLength(html) > maxBytes) { errors.push(`artifact "${meta.type || '?'}": ${byteLength(html)} bytes > maxBytes`); continue; }
         artifacts.push({ type: String(meta.type || 'unknown'), anchor: String(meta.anchor || ''), html });
     }
     // Обрезка сверх лимита — тоже «отброшено»: попадает в errors, чтобы тост

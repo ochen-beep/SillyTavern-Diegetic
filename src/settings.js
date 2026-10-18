@@ -4,7 +4,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
     enabled: false,            // автогенерация — только явным включением
     maxPerMessage: 1,          // 1..5 — сколько артефактов контракт может вернуть за вызов
     contextDepth: 3,           // сколько предыдущих сообщений идут в вызов контекстом
-    maxArtifactBytes: 32768,
     appearance: 'toast',       // 'silent' | 'toast'
     imageMode: 'button',       // 'off' | 'button' | 'auto' — фотослоты через мост URIS
     imageQuality: 'medium',    // 'low' | 'medium' | 'high' — quality для URIS generate()
@@ -107,7 +106,6 @@ export function normalizeSettings(input) {
         enabled: raw.enabled === true,
         maxPerMessage: bounded(raw.maxPerMessage, 1, 5, DEFAULT_SETTINGS.maxPerMessage),
         contextDepth: bounded(raw.contextDepth, 1, 20, DEFAULT_SETTINGS.contextDepth),
-        maxArtifactBytes: bounded(raw.maxArtifactBytes, 1024, 131072, DEFAULT_SETTINGS.maxArtifactBytes),
         appearance: APPEARANCES.has(raw.appearance) ? raw.appearance : DEFAULT_SETTINGS.appearance,
         imageMode: IMAGE_MODES.has(raw.imageMode) ? raw.imageMode : DEFAULT_SETTINGS.imageMode,
         imageQuality: IMAGE_QUALITIES.has(raw.imageQuality) ? raw.imageQuality : DEFAULT_SETTINGS.imageQuality,

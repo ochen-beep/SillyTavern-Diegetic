@@ -86,8 +86,11 @@ async function generateViaCustom({ system, user, profile, signal }) {
     }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(new Error('custom endpoint: таймаут 5 мин')), 300_000);
+    // Отмена могла прийти, пока шли await'ы выше (ключ, шаблон, контекст):
+    // слушатель на уже-аборченном сигнале не сработает — проверяем состояние.
     const onAbort = () => ctrl.abort(signal.reason);
-    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) ctrl.abort(signal.reason);
+    else signal?.addEventListener('abort', onAbort, { once: true });
     try {
         const res = await fetch(ep.normalized, {
             method: 'POST',

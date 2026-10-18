@@ -93,14 +93,23 @@ export function createPipeline(deps) {
                 notify.error(`Diegetic: отброшено ${parsed.errors.length} из ответа (${parsed.errors.join('; ')})`);
             }
 
-            // Якорная валидация против сырой прозы. Якорь задан и не найден —
-            // orphan (в панель); якоря нет вовсе — ok, рендер поставит в конец
-            // поста (resolveMountBlock): слабые модели часто забывают anchor.
+            // Якорная валидация против сырой прозы (и прозы со срезанным markdown:
+            // модель часто цитирует чистый текст без */_ из **bold**/*italic*).
+            // Якорь задан и не найден — orphan (рендер всё равно поставит в конец
+            // поста через resolveMountBlock, а в панели виден статус привязки);
+            // якоря нет вовсе — ok, рендер тоже ставит в конец поста.
+            const plainProse = prose.replace(/[*_~`#>]/g, '');
+            const matchAnchor = (anchor) => {
+                const clean = String(anchor ?? '').replace(/[*_~`#>]/g, '').trim();
+                if (!clean) return { status: 'ok', span: null };
+                const exact = findAnchorInText(prose, anchor) || findAnchorInText(plainProse, clean);
+                if (exact) return { status: 'ok', span: exact };
+                const fuzzy = findFuzzySpan(prose, anchor) || findFuzzySpan(plainProse, clean);
+                if (fuzzy) return { status: 'fuzzy', span: fuzzy };
+                return { status: 'orphan', span: null };
+            };
             const recorded = parsed.artifacts.map((art, i) => {
-                let status = 'ok';
-                let span = art.anchor ? findAnchorInText(prose, art.anchor) : null;
-                if (!span && art.anchor) { span = findFuzzySpan(prose, art.anchor); if (span) status = 'fuzzy'; }
-                if (art.anchor && !span) status = 'orphan';
+                const { status } = matchAnchor(art.anchor);
                 return {
                     id: `${proseDigest}:${i}`, type: art.type, anchor: art.anchor, status,
                     html: art.html, bytes: byteLength(art.html), createdAt: Date.now(), profileId: profile.id,
@@ -125,8 +134,11 @@ export function createPipeline(deps) {
             deps.notifyRender?.(messageId);
 
             const orphans = recorded.filter(a => a.status === 'orphan').length;
-            if (orphans > 0) notify.error(`Diegetic: ${orphans} артефакт(ов) не нашли якорь — см. панель`);
-            else notify.ready(`Diegetic: артефакт(ов): ${recorded.length}`);
+            if (orphans > 0) {
+                notify.ready(`Diegetic: артефакт(ов): ${recorded.length} (${orphans} в конец поста — якорь не найден)`);
+            } else {
+                notify.ready(`Diegetic: артефакт(ов): ${recorded.length}`);
+            }
 
             if (s.imageMode === 'auto' && recorded.some(a => hasPendingSlots(a.html))) fillImageSlots(messageId);
         } finally {

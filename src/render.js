@@ -577,10 +577,12 @@ function rebindPayload(msg, swipeIdx, raw) {
         return null;
     }
     const prose = variantText(msg, swipeIdx);
+    const plainProse = stripMd(prose);
     const artifacts = raw.artifacts.map((a) => {
-        if (!a.anchor || !String(a.anchor).trim()) return a; // позиционные (миграция) — без изменений
-        if (findAnchorInText(prose, a.anchor)) return { ...a, status: 'ok' };
-        if (findFuzzySpan(prose, a.anchor)) return { ...a, status: 'fuzzy' };
+        const clean = stripMd(a.anchor).trim();
+        if (!clean) return a; // позиционные (миграция) или без якоря — без изменений
+        if (findAnchorInText(prose, a.anchor) || findAnchorInText(plainProse, clean)) return { ...a, status: 'ok' };
+        if (findFuzzySpan(prose, a.anchor) || findFuzzySpan(plainProse, clean)) return { ...a, status: 'fuzzy' };
         return { ...a, status: 'orphan' };
     });
     const next = { ...raw, contentDigest: digestForVariant(msg, swipeIdx), artifacts };
@@ -604,7 +606,7 @@ function reconcileMes(mesEl) {
     }
     const desired = new Map();
     for (const a of payload?.artifacts ?? []) {
-        if (a && a.status !== 'orphan' && a.html) desired.set(shellKey(a), a);
+        if (a && a.html) desired.set(shellKey(a), a);
     }
     // Fast-path: ни артефактов, ни оболочек — DOM дальше не трогаем.
     if (!desired.size && !shells.length) return;

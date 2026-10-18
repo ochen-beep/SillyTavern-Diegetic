@@ -103,11 +103,12 @@ test('API упал: тост с ошибкой, payload не записан', as
     assert.ok(notifications.some(([k]) => k === 'error'));
 });
 
-test('якорь не найден: артефакт записан со статусом orphan', async () => {
-    const { deps, msg } = makeDeps({ raw: RESP.replace('взяла телефон', 'фразы нет в тексте') });
+test('якорь не найден: артефакт записан со статусом orphan и ready-уведомлением (рендер ставит в конец поста)', async () => {
+    const { deps, msg, notifications } = makeDeps({ raw: RESP.replace('взяла телефон', 'фразы нет в тексте') });
     await createPipeline(deps).run(0);
     const p = readRawPayload(msg, 0);
     assert.equal(p.artifacts[0].status, 'orphan');
+    assert.ok(notifications.some(([k, m]) => k === 'ready' && /в конец поста/.test(String(m))));
 });
 
 test('выключено настройкой: выход; force: генерация работает', async () => {
@@ -344,4 +345,14 @@ test('артефакт вовсе без якоря — status ok (в конец
     assert.equal(p.artifacts[0].status, 'ok', 'без якоря — не orphan');
     assert.ok(notifications.some(([k]) => k === 'ready'), 'готов-тост без жалоб на якорь');
     assert.ok(!notifications.some(([k, m]) => k === 'error' && /якор/.test(m)));
+});
+
+test('якорь без markdown-звёздочек матчит выделенную в прозе фразу как ok', async () => {
+    const { deps, msg } = makeDeps({
+        message: 'Она молча *взяла* **телефон** и вышла из комнаты.',
+        raw: RESP,
+    });
+    await createPipeline(deps).run(0);
+    const p = readVerifiedPayload(msg, 0);
+    assert.equal(p.artifacts[0].status, 'ok', 'markdown в прозе не мешает привязке якоря');
 });

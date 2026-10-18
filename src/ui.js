@@ -199,7 +199,7 @@ const BUTTON_LABELS = { post: 'У каждого поста', bar: 'В квик-
 const ART_STATUS = {
     ok: { color: '#9c9', label: 'привязан к якорю' },
     fuzzy: { color: '#fc6', label: 'привязка неточная (fuzzy)' },
-    orphan: { color: '#f88', label: 'якорь не найден — в посте не показывается' },
+    orphan: { color: '#f88', label: 'якорь не найден — показан в конце поста' },
     stale: { color: '#9cf', label: 'текст поста менялся — перепривяжется при отрисовке' },
 };
 
@@ -610,7 +610,7 @@ export function mountPanel(deps) {
           <summary><span class="dg-title" style="display:inline">Библиотека артефактов</span></summary>
           <div id="dg-art-list"></div>
           <p class="dg-hint">👁 — открыть, ⤓ — файл, ⟳ — регенерация поста, ✕ — удалить.
-            Статус <b>orphan</b>: якорь потерян, в посте не показывается.</p>
+            Статус <b>orphan</b>: якорь не найден, показан в конце поста.</p>
         </details>
       </div>
       <div class="dg-section">

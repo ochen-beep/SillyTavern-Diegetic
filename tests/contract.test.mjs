@@ -100,9 +100,16 @@ test('stripReasoning: закрытый <think> вырезается, проза 
     assert.equal(stripReasoning(post), '**18 августа 1147 года**\n\nПроза.');
 });
 
-test('stripReasoning: незакрытый <think> срезается до конца', () => {
+test('stripReasoning: незакрытый <think> после текста срезается до конца', () => {
     const post = 'До Think текст.\n<think>мысли оборвались на полуслове';
     assert.equal(stripReasoning(post), 'До Think текст.');
+});
+
+test('stripReasoning: сиротский <think> в самом начале не стирает весь пост', () => {
+    // Регрессия: ST выносит reasoning в extra.reasoning, оставляя открывающий
+    // <think> в начале mes без </think>. Срез до конца давал пустой <post>.
+    const post = '<think>**12 июня 1025 года**\n\nПодъем к западным амбарам шел по пологой дуге.';
+    assert.equal(stripReasoning(post), '**12 июня 1025 года**\n\nПодъем к западным амбарам шел по пологой дуге.');
 });
 
 test('stripReasoning: несколько блоков и без think не меняет текст', () => {

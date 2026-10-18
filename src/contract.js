@@ -40,14 +40,25 @@ const CONTRACT_SIGNATURE = '### TOOL — DIEGETIC HTML';
  * Убрать из поста блоки reasoning RP-модели. Пост приходит как сохранённый
  * ST `mes` и может начинаться с <think>…</think> чужого размышления: модель
  * артефакта читает его как задачу «очисти текст от think» и перепечатывает
- * пост вместо создания артефакта. Незакрытый <think> (обрыв генерации) —
- * мусор до конца строки, срезается целиком.
+ * пост вместо создания артефакта.
+ *
+ * Два случая незакрытого <think>:
+ *  1) Тег <think> в самом начале `mes` без `</think>` — артефакт ST при
+ *     вынесенном `extra.reasoning` (префикс `<think>` остался перед чистовиком
+ *     поста). Срезать до конца здесь нельзя: это сотрёт весь пост. Срезается
+ *     только сам сиротский тег `<think>`.
+ *  2) Незакрытый <think> после текста — обрыв генерации: срезается до конца.
  */
 export function stripReasoning(text) {
     const s = String(text ?? '');
     const withoutClosed = s.replace(/<think>[\s\S]*?<\/think>/gi, '');
-    const open = withoutClosed.indexOf('<think>');
-    return (open >= 0 ? withoutClosed.slice(0, open) : withoutClosed).trim();
+    const open = withoutClosed.search(/<think>/i);
+    if (open < 0) return withoutClosed.replace(/<\/think>/gi, '').trim();
+    const before = withoutClosed.slice(0, open).trim();
+    if (!before) {
+        return withoutClosed.slice(open + '<think>'.length).replace(/<\/?think>/gi, '').trim();
+    }
+    return before;
 }
 
 // Пост обёрнут в делимитеры, а задача повторена ПОСЛЕ него: длинный контекст

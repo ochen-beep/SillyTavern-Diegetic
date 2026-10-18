@@ -4,6 +4,7 @@
 function normalizeChar(ch) {
     return ch
         .normalize('NFC')
+        .replace(/[Ёё]/gu, 'е')
         .replace(/[\u2018\u2019\u201A\u201B']/gu, "'")
         .replace(/[\u201C\u201D\u201E\u201F«»"]/gu, '"')
         .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212-]/gu, '-');
@@ -14,6 +15,7 @@ export function normalizeAnchorKey(value) {
         .normalize('NFC')
         .trim()
         .toLowerCase()
+        .replace(/ё/gu, 'е')
         .replace(/[\u2018\u2019\u201A\u201B']/gu, "'")
         .replace(/[\u201C\u201D\u201E\u201F«»"]/gu, '"')
         .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212-]/gu, '-')

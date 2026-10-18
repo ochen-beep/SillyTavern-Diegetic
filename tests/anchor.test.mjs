@@ -62,3 +62,11 @@ test('findFuzzySpan: при равном расстоянии побеждает
   assert.ok(hit);
   assert.equal(text.slice(hit.start, hit.end), 'разбитый тлефон');
 });
+
+test('findAnchorInText: нормализует ё и е в обе стороны', () => {
+  const text = 'Черные когти и тяжелые повозки еще стояли у моста.';
+  const hit = findAnchorInText(text, 'чёрные когти и тяжёлые повозки ещё');
+  assert.ok(hit, 'разница е/ё не должна ломать точный матч');
+  assert.equal(text.slice(hit.start, hit.end), 'Черные когти и тяжелые повозки еще');
+});
+

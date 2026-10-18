@@ -128,3 +128,21 @@ test('assemblePromptParts: напоминание на английском (к�
     const tail = user.slice(user.indexOf('</post>'));
     assert.ok(!/\p{Script=Cyrillic}/u.test(tail), 'служебное напоминание — только английский');
 });
+
+test('контракт учит схеме мета и закрытию фенса (few-shot пример)', () => {
+    assert.match(DIEGETIC_CONTRACT, /EXACTLY the keys "type" and "anchor"/);
+    assert.match(DIEGETIC_CONTRACT, /ALWAYS close the ```html fence/);
+    assert.match(DIEGETIC_CONTRACT, /NEVER a retelling or a reformatting/);
+    // Пример пары: мета с type/anchor и ЗАКРЫТЫЙ фенс (пар примера нечётным не бывает)
+    const example = DIEGETIC_CONTRACT.slice(DIEGETIC_CONTRACT.indexOf('Example of one pair'));
+    assert.match(example, /<!--DIEGETIC \{"type":"ticket","anchor":"[^"]+"\}-->/);
+    assert.equal(example.split('```').length % 2, 1, 'фенсы примера закрыты');
+});
+
+test('assemblePromptParts: задача — первой строкой user-сообщения', () => {
+    const withCtx = assemblePromptParts({ templateText: 'T {{CONTRACT}}', postText: 'P', contextBlock: 'ctx', maxCount: 2 });
+    assert.match(withCtx.user, /^TASK: Create 2 artifact pair\(s\)/);
+    assert.match(withCtx.user, /Post \(the artifact target\):/);
+    const noCtx = assemblePromptParts({ templateText: 'T', postText: 'P', maxCount: 1 });
+    assert.match(noCtx.user, /^TASK: Create 1 artifact pair\(s\)/);
+});

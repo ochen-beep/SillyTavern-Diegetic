@@ -57,6 +57,8 @@ export function repairJson(raw) {
  * обрезалось бы по первой внутренней тройке бэктиков и проверка "фенс внутри"
  * никогда не срабатывала. Поэтому считаем тройки в сегменте: ровно две — валидный
  * фенс, больше двух — вложенный фенс, меньше двух — фенса нет.
+ * Одна тройка с валидным языком — незакрытый фенс (модель забыла ```): контент
+ * до конца сегмента восстанавливаем, ответ оплачен и терять его расточительно.
  */
 function extractFence(segment) {
     const ticks = [];
@@ -66,11 +68,12 @@ function extractFence(segment) {
         i = segment.indexOf('```', i + 3);
     }
     if (ticks.length > 2) return { error: 'fence inside' };
-    if (ticks.length < 2) return { error: 'no fence after comment' };
+    if (ticks.length === 0) return { error: 'no fence after comment' };
     const nl = segment.indexOf('\n', ticks[0] + 3);
-    if (nl < 0 || nl > ticks[1]) return { error: 'no fence after comment' };
-    if (segment.slice(ticks[0] + 3, nl).trim() !== 'html') return { error: 'no fence after comment' };
-    return { html: segment.slice(nl + 1, ticks[1]) };
+    const end = ticks.length === 2 ? ticks[1] : segment.length;
+    if (nl < 0 || nl > end) return { error: 'no fence after comment' };
+    if (segment.slice(ticks[0] + 3, nl).trim().toLowerCase() !== 'html') return { error: 'no fence after comment' };
+    return { html: segment.slice(nl + 1, end) };
 }
 
 /**

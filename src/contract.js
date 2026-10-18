@@ -19,7 +19,18 @@ Each artifact is exactly one pair:
   the artifact is embedded in the post and does not need screen height.
 - Refusal is not allowed. An empty reply, "nothing comes to mind", "does not fit" — all contract
   violations: pure dialogue is a chat on a screen, reflection is a note, a scene change is a signboard.
-  Every post has a suitable medium — find it and execute it.`;
+  Every post has a suitable medium — find it and execute it.
+- Meta carries EXACTLY the keys "type" and "anchor" — no other keys.
+- ALWAYS close the \`\`\`html fence. An unclosed fence is a contract violation.
+- The artifact is a NEW physical object you design (a note, a ticket, a device, a signboard);
+  it is NEVER a retelling or a reformatting of the post text.
+
+**Example of one pair — format only, never reuse its content:**
+<!--DIEGETIC {"type":"ticket","anchor":"verbatim short phrase from the post"}-->
+\`\`\`html
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>.t{font-family:serif}</style></head>
+<body><div class="t"><h3>THEATRE TICKET</h3><p>Row 3, Seat 12 — admit one</p></div></body></html>
+\`\`\``;
 
 /** Сигнатура уже вставленного контракта: старые шаблоны с контрактом,
  *  вписанным целиком, не должны получить его вторым экземпляром. */
@@ -65,9 +76,12 @@ export function assemblePromptParts({ templateText, postText, contextBlock = '',
     }
     const filled = withContract.replace(/\{\{MAX_COUNT\}\}/gu, String(maxCount));
     const post = stripReasoning(postText);
+    // Задача — первой строкой: длинный контекст (персоны/лор) не должен
+    // восприниматься как основное содержимое запроса.
+    const task = `TASK: Create ${maxCount} artifact pair(s) from the post at the bottom, exactly as the system contract requires.`;
     const user = contextBlock
-        ? `Context of earlier messages:\n${contextBlock}\n\nPost (create an artifact for it):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`
-        : `Post (create an artifact for it):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`;
+        ? `${task} The context below is background only — it is never the artifact target.\n\nContext of earlier messages:\n${contextBlock}\n\nPost (the artifact target):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`
+        : `${task}\n\nPost (the artifact target):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`;
     return { system: filled.trim(), user };
 }
 

@@ -44,8 +44,19 @@ test('repairJson: regex-фолбэк по полям', () => {
   assert.equal(v.anchor, 'карта мира');
 });
 
-test('валидации: без <body — ошибка, артефакт отброшен', () => {
-  const bad = `<!--DIEGETIC {"anchor":"x"}-->\n\`\`\`html\n<div>no body</div>\n\`\`\``;
+test('фрагмент без <body> оборачивается, а не отбрасывается', () => {
+  // Регрессия «artifact "item": no <body>»: модель отдаёт style+div —
+  // оплаченный фрагмент обязан сохраниться
+  const frag = '<!--DIEGETIC {"type":"item","anchor":"x"}-->\n\`\`\`html\n<style>.a{}</style>\n<div class="a">спички</div>\n\`\`\`';
+  const r = parseDiegeticResponse(frag, {});
+  assert.equal(r.artifacts.length, 1);
+  assert.equal(r.errors.length, 0);
+  assert.match(r.artifacts[0].html, /^<body>/);
+  assert.ok(r.artifacts[0].html.includes('<div class="a">'));
+});
+
+test('пустой фенс — ошибка, артефакт отброшен', () => {
+  const bad = '<!--DIEGETIC {"anchor":"x"}-->\n\`\`\`html\n   \n\`\`\`';
   const r = parseDiegeticResponse(bad, {});
   assert.equal(r.artifacts.length, 0);
   assert.ok(r.errors.length >= 1);
@@ -138,4 +149,27 @@ test('maxCount-обрезка не молчалива: error-запись с ч�
   const r = parseDiegeticResponse(three, { maxCount: 1 });
   assert.equal(r.artifacts.length, 1);
   assert.ok(r.errors.some(e => /maxCount: 2 over limit 1/.test(e)), 'обрезанные артефакты видны в errors');
+});
+
+test('незакрытый ```html — контент до конца ответа восстанавливается', () => {
+  // Регрессия «no fence after comment»: модель забыла закрыть фенс —
+  // оплаченный ответ не должен отбрасываться
+  const raw = '<!--DIEGETIC {"type":"note","anchor":"x"}-->\n```html\n<body><p>хвост</p>';
+  const r = parseDiegeticResponse(raw, {});
+  assert.equal(r.artifacts.length, 1);
+  assert.equal(r.artifacts[0].html, '<body><p>хвост</p>');
+  assert.equal(r.errors.length, 0);
+});
+
+test('язык фенса регистронезависим (```HTML проходит)', () => {
+  const raw = '<!--DIEGETIC {"type":"note","anchor":"x"}-->\n```HTML\n<body>x</body>\n```';
+  const r = parseDiegeticResponse(raw, {});
+  assert.equal(r.artifacts.length, 1);
+});
+
+test('фенс не на html-языке по-прежнему отброшен', () => {
+  const raw = '<!--DIEGETIC {"type":"note","anchor":"x"}-->\n```js\nconst x = 1;\n```';
+  const r = parseDiegeticResponse(raw, {});
+  assert.equal(r.artifacts.length, 0);
+  assert.ok(r.errors.some(e => e.includes('no fence')));
 });

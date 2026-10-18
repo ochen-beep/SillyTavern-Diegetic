@@ -332,3 +332,16 @@ test('пост изменился за время генерации без ре
     assert.equal(readRawPayload(msg, 0), null, 'дайджест не совпал — запись не прошла');
     assert.ok(notifications.some(([k, m]) => k === 'warn' && /не записан/.test(m)));
 });
+
+test('артефакт вовсе без якоря — status ok (в конец поста), а не orphan', async () => {
+    // Регрессия: слабые модели забывают anchor — такой артефакт не должен
+    // пропадать в панель, он рендерится в конец поста (resolveMountBlock)
+    const raw = `<!--DIEGETIC {"type":"item","description":"шпильки"}-->\n\`\`\`html\n<body><p>шпильки</p></body>\n\`\`\``;
+    const { deps, msg, notifications } = makeDeps({ raw });
+    deps.notify.warn = (m) => notifications.push(['warn', m]);
+    await createPipeline(deps).run(0);
+    const p = readVerifiedPayload(msg, 0);
+    assert.equal(p.artifacts[0].status, 'ok', 'без якоря — не orphan');
+    assert.ok(notifications.some(([k]) => k === 'ready'), 'готов-тост без жалоб на якорь');
+    assert.ok(!notifications.some(([k, m]) => k === 'error' && /якор/.test(m)));
+});

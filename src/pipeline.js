@@ -93,12 +93,14 @@ export function createPipeline(deps) {
                 notify.error(`Diegetic: отброшено ${parsed.errors.length} из ответа (${parsed.errors.join('; ')})`);
             }
 
-            // Якорная валидация против сырой прозы.
+            // Якорная валидация против сырой прозы. Якорь задан и не найден —
+            // orphan (в панель); якоря нет вовсе — ok, рендер поставит в конец
+            // поста (resolveMountBlock): слабые модели часто забывают anchor.
             const recorded = parsed.artifacts.map((art, i) => {
                 let status = 'ok';
                 let span = art.anchor ? findAnchorInText(prose, art.anchor) : null;
                 if (!span && art.anchor) { span = findFuzzySpan(prose, art.anchor); if (span) status = 'fuzzy'; }
-                if (!span) status = 'orphan';
+                if (art.anchor && !span) status = 'orphan';
                 return {
                     id: `${proseDigest}:${i}`, type: art.type, anchor: art.anchor, status,
                     html: art.html, bytes: byteLength(art.html), createdAt: Date.now(), profileId: profile.id,

@@ -117,8 +117,11 @@ export function parseDiegeticResponse(raw, { maxCount = 5 } = {}) {
         const fence = extractFence(text.slice(segStart, segEnd));
         if (fence.error) { errors.push(`${fence.error} near index ${cm.index}`); continue; }
         const html = String(fence.html ?? '').trim();
-        if (!/<body/i.test(html)) { errors.push(`artifact "${meta.type || '?'}": no <body>`); continue; }
-        artifacts.push({ type: String(meta.type || 'unknown'), anchor: String(meta.anchor || ''), html });
+        if (!html) { errors.push(`artifact "${meta.type || '?'}": empty fenced block`); continue; }
+        // Фрагмент без <body> (модель отдала style+div) оборачиваем: ответ оплачен,
+        // а render-путь с fragment'ами справляется (withImmersiveCss допарсивает).
+        const full = /<body/i.test(html) ? html : `<body>\n${html}\n</body>`;
+        artifacts.push({ type: String(meta.type || 'unknown'), anchor: String(meta.anchor || ''), html: full });
     }
     // Обрезка сверх лимита — тоже «отброшено»: попадает в errors, чтобы тост
     // показывал, почему при «N артефактов» в ответе их меньше.

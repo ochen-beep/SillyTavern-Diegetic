@@ -5,7 +5,7 @@ import { createPipeline, isExcluded } from '../src/pipeline.js';
 import { createGenerationCoordinator } from '../src/coordinator.js';
 import { DEFAULT_SETTINGS } from '../src/settings.js';
 import { contentDigest } from '../src/digest.js';
-import { readVerifiedPayload, readRawPayload, stampPayload, writePayload } from '../src/payload.js';
+import { readVerifiedPayload, readRawPayload, stampPayload, writePayload, dgMessageId } from '../src/payload.js';
 import { _testSetEntries, readEntry } from '../src/store.js';
 
 const PROSE = 'Она молча взяла телефон и вышла из комнаты.\n\nДверь закрылась.';
@@ -211,13 +211,33 @@ test('источник profile: generateText получает части system/
     assert.ok(readVerifiedPayload(msg, 0));
 });
 
-test('прогон по чужому digest: запись в store под send_date, сообщение чистое', async () => {
+test('прогон: запись в store под dg_id:слот, сообщение чистое', async () => {
     const { deps, msg } = makeDeps();
     await createPipeline(deps).run(0);
-    assert.ok(readEntry('d0'), 'запись в store под send_date варианта');
-    assert.equal(readEntry('d0').contentDigest, contentDigest(PROSE));
+    const key = `${dgMessageId(msg)}:0`;
+    assert.ok(readEntry(key), 'запись в store под dg_id варианта');
+    assert.equal(readEntry(key).contentDigest, contentDigest(PROSE));
     assert.equal(msg.swipe_info[0].extra?.dg, undefined, 'слот extra чист');
     assert.equal(msg.extra?.dg, undefined, 'зеркала больше нет');
+});
+
+test('индекс сдвинулся удалением соседа: коммит находит пост по dg_id', async () => {
+    // Регрессия: за время генерации удалили соседний пост — индексы сдвинулись,
+    // запись по старому индексу ушла бы чужому сообщению или в никуда.
+    const { deps, msg, notifications } = makeDeps();
+    deps.notify.warn = (m) => notifications.push(['warn', m]);
+    const neighbor = { is_user: false, mes: 'сосед', swipes: ['сосед'], swipe_id: 0, swipe_info: [{ send_date: 'dn' }], send_date: 'dn', extra: {} };
+    const chat = [neighbor, msg];
+    deps.getMessage = (id) => chat[Number(id)] ?? null;
+    deps.getMessageByDgId = (dgId) => chat.find((m) => m?.extra?.dg_id === dgId) ?? null;
+    deps.generateText = async () => {
+        chat.shift(); // сосед удалён во время генерации: msg теперь индекс 0
+        return RESP;
+    };
+    await createPipeline(deps).run(1); // прогон стартовал по индексу 1
+    const p = readVerifiedPayload(msg, 0);
+    assert.ok(p, 'ответ записан своему сообщению, несмотря на сдвиг индекса');
+    assert.equal(p.artifacts[0].status, 'ok');
 });
 
 const SLOT_ART = '<body><div class="photo" data-dg-img="img: old prompt" style="position:relative;height:100px"><b>ph</b></div></body>';

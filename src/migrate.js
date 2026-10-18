@@ -119,3 +119,37 @@ export async function migrateCurrentChat() {
     if (changed) await persistChat();
     return changed;
 }
+
+// ── Миграция ключей хранилища: send_date → dg_id:слот ────────────────────
+// send_date варианта ST переставляет при регенерации свайпа и continue
+// (script.js:6679/6704) — адресация по дате теряла готовые пейлоады.
+// Одноразовый перенос существующих записей на стабильные ключи; идемпотентна.
+
+import { dgMessageId } from './payload.js';
+import { readEntry, writeEntry, deleteEntry } from './store.js';
+
+export function migrateSendDateKeys() {
+    const chat = getCtx()?.chat;
+    if (!Array.isArray(chat)) return false;
+    let changed = false;
+    for (const msg of chat) {
+        if (!msg || typeof msg !== 'object') continue;
+        const slots = Math.max(
+            Array.isArray(msg.swipes) ? msg.swipes.length : 0,
+            Array.isArray(msg.swipe_info) ? msg.swipe_info.length : 0,
+            1,
+        );
+        for (let idx = 0; idx < slots; idx++) {
+            const oldKey = msg.swipe_info?.[idx]?.send_date ?? msg.send_date ?? null;
+            if (!oldKey || !readEntry(oldKey)) continue;
+            const newKey = `${dgMessageId(msg, { create: true })}:${idx}`;
+            if (newKey === oldKey || readEntry(newKey)) continue; // занято — старое подберёт gcStore
+            // Зеркало могло быть не загружено (readEntry вернул null выше) — тогда
+            // ничего не делаем: миграция повторится на следующем prepareChat.
+            writeEntry(newKey, readEntry(oldKey));
+            deleteEntry(oldKey);
+            changed = true;
+        }
+    }
+    return changed;
+}

@@ -9,7 +9,7 @@ import { parseDiegeticResponse } from './parser.js';
 import { assemblePromptParts } from './contract.js';
 import {
     readRawPayload, readVerifiedPayload, stampPayload, writePayload,
-    payloadBelongsToOtherVariant,
+    payloadBelongsToOtherVariant, dgMessageId,
     variantText, digestForVariant,
 } from './payload.js';
 import {
@@ -53,6 +53,10 @@ export function createPipeline(deps) {
         const proseDigest = contentDigest(prose);
 
         const run = deps.coordinator.beginRun(messageId);
+        // Стабильная идентичность поста: за время генерации индексы чата
+        // могут сдвинуться (удаление соседнего поста) — коммит ищет пост по
+        // dg_id, а не по индексу, и пишет результат своему сообщению.
+        const runDgId = dgMessageId(msg, { create: true });
         try {
             // Дескриптор источника собирает хост (index.js) из настроек.
             const profile = deps.getSourceProfile();
@@ -102,7 +106,9 @@ export function createPipeline(deps) {
             });
 
             // Commit-гард: прогон актуален и проза не сменилась за время генерации.
-            const live = deps.getMessage(messageId);
+            // Индекс мог сдвинуться (удаление соседа) — пост ищем по dg_id.
+            let live = deps.getMessage(messageId);
+            if (!live || dgMessageId(live) !== runDgId) live = deps.getMessageByDgId?.(runDgId) ?? null;
             if (!live || !deps.coordinator.isCurrent(run) || digestForVariant(live, swipeIdx) !== proseDigest) {
                 // Здесь попадают только завершённые ответы — терять их молча нельзя.
                 notify.warn?.(!live

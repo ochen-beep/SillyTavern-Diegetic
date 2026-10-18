@@ -15,6 +15,7 @@
 // медленно и безвредны; если файл раздуется, добавить GC по кнопке.
 
 import { getCtx, chatData, saveChatData } from './core.js';
+import { dgMessageId } from './payload.js';
 
 const warn = (...a) => console.warn('[Diegetic]', ...a);
 
@@ -138,23 +139,29 @@ export function migrateExtraToStore() {
     for (const msg of chat) {
         if (!msg || typeof msg !== 'object') continue;
         const seen = new Set();
+        const slots = Math.max(
+            Array.isArray(msg.swipes) ? msg.swipes.length : 0,
+            Array.isArray(msg.swipe_info) ? msg.swipe_info.length : 0,
+            1,
+        );
+        const keyAt = (idx) => `${dgMessageId(msg, { create: true })}:${idx}`;
         if (Array.isArray(msg.swipe_info)) {
-            for (const slot of msg.swipe_info) {
-                const p = slot?.extra?.dg;
+            for (let idx = 0; idx < msg.swipe_info.length; idx++) {
+                const p = msg.swipe_info[idx]?.extra?.dg;
                 if (!p) continue;
-                const key = slot.send_date ?? msg.send_date;
-                if (key && !_mirror.entries[key]) {
+                const key = keyAt(idx);
+                if (!_mirror.entries[key]) {
                     _mirror.entries[key] = p;
                     seen.add(JSON.stringify(p));
                 }
-                delete slot.extra.dg;
+                delete msg.swipe_info[idx].extra.dg;
                 changed = true;
             }
         }
         const p = msg.extra?.dg;
         if (p) {
-            const key = msg.swipe_info?.[msg.swipe_id ?? 0]?.send_date ?? msg.send_date;
-            if (key && !_mirror.entries[key] && !seen.has(JSON.stringify(p))) _mirror.entries[key] = p;
+            const key = keyAt(msg.swipe_id ?? 0);
+            if (!_mirror.entries[key] && !seen.has(JSON.stringify(p))) _mirror.entries[key] = p;
             delete msg.extra.dg;
             changed = true;
         }
@@ -164,16 +171,21 @@ export function migrateExtraToStore() {
 }
 
 /** MESSAGE_DELETED (приходит ПОСЛЕ удаления): выкинуть записи, на которые
- *  больше не ссылается ни один свайп чата. */
+ *  больше не ссылается ни одно сообщение чата. Ключи — dg_id:слот; у сообщений
+ *  без dg_id записей быть не может (id создаётся только записью/миграцией). */
 export function gcStore() {
     const chat = getCtx()?.chat;
     if (!Array.isArray(chat) || !_mirror) return;
     const valid = new Set();
     for (const m of chat) {
-        if (m?.send_date) valid.add(m.send_date);
-        for (const s of Array.isArray(m?.swipe_info) ? m.swipe_info : []) {
-            if (s?.send_date) valid.add(s.send_date);
-        }
+        const id = m?.extra?.dg_id;
+        if (typeof id !== 'string' || !id) continue;
+        const slots = Math.max(
+            Array.isArray(m.swipes) ? m.swipes.length : 0,
+            Array.isArray(m.swipe_info) ? m.swipe_info.length : 0,
+            1,
+        );
+        for (let i = 0; i < slots; i++) valid.add(`${id}:${i}`);
     }
     for (const k of Object.keys(_mirror.entries)) {
         if (!valid.has(k)) deleteEntry(k);

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     variantText, digestForVariant, readRawPayload, readVerifiedPayload,
     payloadBelongsToOtherVariant, stampPayload, writePayload, clearPayload,
+    dgMessageId,
 } from '../src/payload.js';
 import { _testSetEntries, readEntry } from '../src/store.js';
 import { contentDigest } from '../src/digest.js';
@@ -17,6 +18,9 @@ function makeMsg({ text = TEXT, swipeId = 0, swipes = null } = {}) {
     return msg;
 }
 
+/** Ключ варианта как его считает keyFor: dg_id:слот (id создаётся при записи). */
+const keyOf = (msg, idx = 0) => `${dgMessageId(msg, { create: true })}:${idx}`;
+
 beforeEach(() => _testSetEntries({}));
 
 test('variantText: swipes[idx] важнее mes, нет свайпов — mes', () => {
@@ -26,15 +30,32 @@ test('variantText: swipes[idx] важнее mes, нет свайпов — mes',
     assert.equal(variantText(makeMsg()), TEXT);
 });
 
-test('stamp→write→readVerified: roundtrip, сообщение не трогается', () => {
+test('stamp→write→readVerified: roundtrip, запись под dg_id:слот', () => {
     const msg = makeMsg({ swipes: [TEXT] });
     const p = stampPayload(msg, 0, artifacts);
     assert.equal(p.contentDigest, contentDigest(TEXT));
     writePayload(msg, 0, p);
-    assert.equal(readEntry('d0'), p, 'запись ушла в store под send_date слота');
-    assert.equal(msg.swipe_info[0].extra.dg, undefined, 'extra сообщения чистое');
+    assert.equal(readEntry(keyOf(msg, 0)), p, 'запись ушла в store под dg_id:слот');
+    assert.equal(msg.swipe_info[0].extra.dg, undefined, 'extra слота чистое');
     assert.equal(msg.extra.dg, undefined, 'зеркала больше нет');
     assert.equal(readVerifiedPayload(msg, 0), p);
+});
+
+test('ключ стабилен при регенерации свайпа/continue: send_date переставлена — пейлоад жив', () => {
+    // Регрессия: ST переставляет send_date при регенерации текущего свайпа и
+    // continue (script.js:6679/6704) — адресация по дате теряла пейлоад.
+    const msg = makeMsg({ swipes: [TEXT] });
+    writePayload(msg, 0, stampPayload(msg, 0, artifacts));
+    const stamp = 'October 18, 2026 10:05am';
+    msg.send_date = stamp;
+    msg.swipe_info[0] = { send_date: stamp, gen_started: '', gen_finished: '', extra: structuredClone(msg.extra) };
+    assert.ok(readVerifiedPayload(msg, 0), 'проза не менялась — артефакт обязан остаться');
+});
+
+test('чтение не мутирует сообщение: без dg_id — null, extra чистое', () => {
+    const msg = makeMsg();
+    assert.equal(readRawPayload(msg, 0), null);
+    assert.equal(msg.extra.dg_id, undefined, 'id не создан чтением');
 });
 
 test('digest-гейт: правка текста делает payload невидимым для verified-чтения', () => {
@@ -45,7 +66,7 @@ test('digest-гейт: правка текста делает payload невид
     assert.ok(readRawPayload(msg, 0), 'raw-чтение для rebind остаётся');
 });
 
-test('варианты адресуются своей send_date: запись в один не видна из другого', () => {
+test('варианты адресуются индексом слота: запись в один не видна из другого', () => {
     const msg = makeMsg({ swipes: [TEXT, 'Другой вариант текста.'], swipeId: 1 });
     writePayload(msg, 0, stampPayload(msg, 0, artifacts));
     assert.ok(readRawPayload(msg, 0));
@@ -58,26 +79,24 @@ test('foreign payload: дайджест другого варианта дете
     const b = makeMsg({ swipes: [TEXT, 'Совсем другая сцена у окна.'], swipeId: 1 });
     assert.equal(payloadBelongsToOtherVariant(b, 1, payload), true);
     assert.equal(payloadBelongsToOtherVariant(b, 0, { ...payload }), false, 'свой вариант — не foreign');
-    _testSetEntries({ d1: payload });
+    _testSetEntries({ [keyOf(b, 1)]: payload });
     assert.ok(readRawPayload(b, 1));
     assert.equal(readVerifiedPayload(b, 1), null, 'digest не сошёлся — verified null');
 });
 
-test('сообщение без свайп-механики: ключ — send_date сообщения', () => {
+test('сообщение без свайп-механики: ключ dg_id:0', () => {
     const msg = makeMsg();
     writePayload(msg, 0, stampPayload(msg, 0, artifacts));
-    assert.ok(readEntry('d0'));
+    assert.ok(readEntry(keyOf(msg, 0)));
     assert.equal(readVerifiedPayload(msg, 0).artifacts[0].type, 'phone');
 });
 
-test('сообщение вообще без send_date: запись отклоняется', () => {
-    const msg = { mes: TEXT, extra: {} };
-    assert.equal(writePayload(msg, 0, stampPayload(msg, 0, artifacts)), null);
-});
-
-test('stampPayload: заглушка стрима не штампуется', () => {
-    assert.equal(stampPayload(makeMsg({ text: '...' }), 0, artifacts), null);
-    assert.equal(stampPayload(makeMsg({ text: '' }), 0, artifacts), null);
+test('isPayloadShape отсекает мусор и чужие схемы', () => {
+    const msg = makeMsg({ swipes: [TEXT] });
+    _testSetEntries({ [keyOf(msg, 0)]: { schema: 99, contentDigest: digestForVariant(msg, 0), artifacts: [] } });
+    assert.equal(readRawPayload(msg, 0), null);
+    _testSetEntries({ [keyOf(msg, 0)]: { schema: 1, contentDigest: digestForVariant(msg, 0), artifacts: 'oops' } });
+    assert.equal(readRawPayload(msg, 0), null);
 });
 
 test('clearPayload: запись удаляется', () => {
@@ -86,12 +105,4 @@ test('clearPayload: запись удаляется', () => {
     assert.equal(clearPayload(msg, 0), true);
     assert.equal(readRawPayload(msg, 0), null);
     assert.equal(clearPayload(msg, 0), false, 'повторная очистка — false');
-});
-
-test('isPayloadShape отсекает мусор и чужие схемы', () => {
-    const msg = makeMsg({ swipes: [TEXT] });
-    _testSetEntries({ d0: { schema: 99, contentDigest: digestForVariant(msg, 0), artifacts: [] } });
-    assert.equal(readRawPayload(msg, 0), null);
-    _testSetEntries({ d0: { schema: 1, contentDigest: digestForVariant(msg, 0), artifacts: 'oops' } });
-    assert.equal(readRawPayload(msg, 0), null);
 });

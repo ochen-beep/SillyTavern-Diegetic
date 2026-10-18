@@ -1,7 +1,14 @@
 // src/payload.js — адресация артефактов к варианту сообщения.
-// Хранилище — файловое (src/store.js), ключ = send_date свайпа. В сообщениях
-// артефакты не живут: файл чата не раздувается, клон extra при свайпе не может
-// подсунуть чужой payload, правка текста артефакт не теряет.
+// Хранилище — файловое (src/store.js), ключ = dg_id сообщения + индекс
+// свайп-слота. В сообщениях артефакты не живут: файл чата не раздувается,
+// клон extra при свайпе не может подсунуть чужой payload, правка текста
+// артефакт не теряет.
+//
+// КЛЮЧ НЕ send_date: ST переставляет её при регенерации текущего свайпа и
+// при continue (script.js:6679/6704 — `lastMessage.send_date =
+// getMessageTimeStamp()`), адресация по дате теряла готовый пейлоад.
+// dg_id в extra стабилен при регенерациях, свайпах и continue; индекс слота
+// идентичен варианту, пока слоты не удаляются поштучно.
 //
 // ИНВАРИАНТ: payload используется, только когда его contentDigest совпадает с
 // дайджестом текущего текста варианта. Расхождение (правка текста) читается
@@ -15,7 +22,23 @@ import { readEntry, writeEntry, deleteEntry } from './store.js';
 export const PAYLOAD_KEY = 'dg';
 export const PAYLOAD_SCHEMA = 1;
 
-/** Текст варианта по правилу самого ST (swipes[idx] ?? mes). '' для отсутствующего. */
+/**
+ * Стабильный id сообщения в extra.dg_id. create=false — чистое чтение:
+ * отсутствующий id не создаётся (никаких мутаций из путей рендера/скана).
+ */
+export function dgMessageId(msg, { create = false } = {}) {
+    if (!msg || typeof msg !== 'object') return null;
+    if (!msg.extra || typeof msg.extra !== 'object') {
+        if (!create) return null;
+        msg.extra = {};
+    }
+    if (typeof msg.extra.dg_id === 'string' && msg.extra.dg_id) return msg.extra.dg_id;
+    if (!create) return null;
+    msg.extra.dg_id = crypto.randomUUID();
+    return msg.extra.dg_id;
+}
+
+/** Текст варианта по правилам самого ST (swipes[idx] ?? mes). '' для отсутствующего. */
 export function variantText(msg, swipeIdx = 0) {
     if (!msg) return '';
     const idx = Number(swipeIdx) || 0;
@@ -35,11 +58,25 @@ function isPayloadShape(value) {
         && Array.isArray(value.artifacts);
 }
 
-/** Ключ варианта: send_date его swipe-слота; несвайповым — send_date сообщения. */
-function keyFor(msg, swipeIdx = 0) {
-    if (!msg) return null;
+/**
+ * Ключ варианта: dg_id + индекс свайп-слота. create=true — создать id при
+ * записи; чтение без id даёт null и не мутирует сообщение.
+ */
+function keyFor(msg, swipeIdx = 0, { create = false } = {}) {
+    const id = dgMessageId(msg, { create });
+    if (!id) return null;
     const idx = Number(swipeIdx) || 0;
-    return msg.swipe_info?.[idx]?.send_date ?? msg.send_date ?? null;
+    return `${id}:${idx}`;
+}
+
+/** Сколько свайп-слотов у сообщения (для перечисления ключей в gc/миграции). */
+export function slotCount(msg) {
+    if (!msg) return 0;
+    return Math.max(
+        Array.isArray(msg.swipes) ? msg.swipes.length : 0,
+        Array.isArray(msg.swipe_info) ? msg.swipe_info.length : 0,
+        1,
+    );
 }
 
 /** Payload без digest-гейта — только для rebind/инспекции. */
@@ -91,14 +128,14 @@ export function stampPayload(msg, swipeIdx, artifacts) {
 }
 
 /**
- * Записать payload за вариант. Адресован send_date'ой варианта: асинхронная
- * генерация, пришедшая после свайпа пользователя, пишется в слот СВОЕГО
- * варианта и показанный не загрязняет. Дайджест уже должен совпадать с текстом
+ * Записать payload за вариант. Адресован dg_id+слоту: асинхронная генерация,
+ * пришедшая после свайпа пользователя, пишется в слот СВОЕГО варианта и
+ * показанный не загрязняет. Дайджест уже должен совпадать с текстом
  * (stampPayload / rebind-проверенный payload).
  */
 export function writePayload(msg, swipeIdx, payload) {
     if (!msg || !isPayloadShape(payload)) return null;
-    const key = keyFor(msg, swipeIdx);
+    const key = keyFor(msg, swipeIdx, { create: true });
     if (!key) return null;
     writeEntry(key, payload);
     return payload;

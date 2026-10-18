@@ -21,11 +21,12 @@ import { createGenerationCoordinator } from './src/coordinator.js';
 import { createInitializationController } from './src/lifecycle.js';
 import { mountPanel, unmountUi, collectRows } from './src/ui.js';
 import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating, deleteArtifact, clearImageCache, openArtifactPopup, saveArtifactById } from './src/render.js';
-import { migrateCurrentChat } from './src/migrate.js';
+import { migrateCurrentChat, migrateSendDateKeys } from './src/migrate.js';
 import { loadStore, migrateExtraToStore, gcStore, deleteStoreFile } from './src/store.js';
 import { variantText, PAYLOAD_KEY } from './src/payload.js';
 import { urisStatus } from './src/images.js';
 import { collectContext } from './src/context.js';
+import { stripReasoning } from './src/contract.js';
 import { classifyEndpoint, isOriginAllowed, addToAllowList } from './src/endpoint-policy.js';
 
 const log = (...a) => console.log('[Diegetic]', ...a);
@@ -51,7 +52,8 @@ async function getContextBlock(messageId, depth) {
         const m = chat[i];
         if (!m) continue;
         // Проза — это и есть весь текст: артефакты в тексте не живут (extra).
-        lines.push(`${m.is_user ? (m.name || ctx?.name1 || 'Пользователь') : (m.name || ctx?.name2 || 'ИИ')}: ${String(m.mes ?? '').slice(0, 400)}`);
+        // Reasoning RP-модели в mes не нужен контексту артефакта — только шум.
+        lines.push(`${m.is_user ? (m.name || ctx?.name1 || 'Пользователь') : (m.name || ctx?.name2 || 'ИИ')}: ${stripReasoning(String(m.mes ?? '')).slice(0, 400)}`);
     }
     return collectContext(ctx, {
         persona: settings.ctxPersona,
@@ -98,6 +100,12 @@ async function init(isCancelled = () => false) {
     pipeline = createPipeline({
         notify,
         getMessage,
+        // Индексы чата сдвигаются при удалении постов — коммит генерации ищет
+        // своё сообщение по стабильному dg_id (см. payload.dgMessageId).
+        getMessageByDgId: (dgId) => {
+            const found = getChat().find((m) => m?.extra?.dg_id === dgId);
+            return found ?? null;
+        },
         generateText,
         persistChat,
         getContextBlock,
@@ -285,7 +293,7 @@ async function init(isCancelled = () => false) {
     if (isCancelled()) return;
 
     // Текущий чат: миграция legacy-фенсов → загрузка хранилища → перенос
-    // extra-эпохи в файл → reconcile.
+    // extra-эпохи и send_date-ключей в файл → reconcile.
     prepareChat().catch((e) => warn('миграция:', e));
 
     log('готов');
@@ -295,7 +303,7 @@ async function init(isCancelled = () => false) {
 async function prepareChat() {
     await migrateCurrentChat();
     await loadStore();
-    if (migrateExtraToStore()) await persistChat();
+    if (migrateExtraToStore() || migrateSendDateKeys()) await persistChat();
     reconcile();
 }
 

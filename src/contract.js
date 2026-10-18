@@ -26,6 +26,27 @@ Each artifact is exactly one pair:
 const CONTRACT_SIGNATURE = '### TOOL — DIEGETIC HTML';
 
 /**
+ * Убрать из поста блоки reasoning RP-модели. Пост приходит как сохранённый
+ * ST `mes` и может начинаться с <think>…</think> чужого размышления: модель
+ * артефакта читает его как задачу «очисти текст от think» и перепечатывает
+ * пост вместо создания артефакта. Незакрытый <think> (обрыв генерации) —
+ * мусор до конца строки, срезается целиком.
+ */
+export function stripReasoning(text) {
+    const s = String(text ?? '');
+    const withoutClosed = s.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    const open = withoutClosed.indexOf('<think>');
+    return (open >= 0 ? withoutClosed.slice(0, open) : withoutClosed).trim();
+}
+
+// Пост обёрнут в делимитеры, а задача повторена ПОСЛЕ него: длинный контекст
+// (персоны/лор) в начале user-сообщения забивает инструкцию, и модель
+// отвечает пересказом поста. Напоминание в хвосте работает на recency.
+const POST_TASK_REMINDER = '\n\nRespond ONLY with the artifact pair(s) defined by the system contract'
+    + ' above: one <!--DIEGETIC {...}--> comment + one ```html fenced block each.'
+    + ' Do not retell, clean up or reformat the post text.';
+
+/**
  * Раздельная сборка: system = шаблон+контракт, user = контекст+пост.
  * assemblePrompt — те же части, склеенные в одну строку для generateRaw.
  * Идемпотентно: контракт вставляется ровно один раз — по {{CONTRACT}}, а если
@@ -43,9 +64,10 @@ export function assemblePromptParts({ templateText, postText, contextBlock = '',
         withContract = template.trim() + '\n\n' + DIEGETIC_CONTRACT;
     }
     const filled = withContract.replace(/\{\{MAX_COUNT\}\}/gu, String(maxCount));
+    const post = stripReasoning(postText);
     const user = contextBlock
-        ? `Context of earlier messages:\n${contextBlock}\n\nPost (create an artifact for it):\n${postText}`
-        : `Post (create an artifact for it):\n${postText}`;
+        ? `Context of earlier messages:\n${contextBlock}\n\nPost (create an artifact for it):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`
+        : `Post (create an artifact for it):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`;
     return { system: filled.trim(), user };
 }
 

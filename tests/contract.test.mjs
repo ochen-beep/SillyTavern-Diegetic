@@ -87,3 +87,44 @@ test('round-trip: пара из контракта парсится чисто',
   assert.equal(r.artifacts.length, 1);
   assert.deepEqual(r.errors, []);
 });
+
+// ── Reasoning RP-модели не должен утекать в промпт артефакта ──
+// Регрессия «получаю перепечатанный пост вместо артефакта»: пост приходит
+// с <think>-блоком RP-модели, модель артефакта читала его как задачу
+// «очисти текст от think» и пересказывала пост.
+
+import { stripReasoning } from '../src/contract.js';
+
+test('stripReasoning: закрытый <think> вырезается, проза целая', () => {
+    const post = '<think>\n1. Камера и голос (POV): Анри...\n</think>**18 августа 1147 года**\n\nПроза.';
+    assert.equal(stripReasoning(post), '**18 августа 1147 года**\n\nПроза.');
+});
+
+test('stripReasoning: незакрытый <think> срезается до конца', () => {
+    const post = 'До Think текст.\n<think>мысли оборвались на полуслове';
+    assert.equal(stripReasoning(post), 'До Think текст.');
+});
+
+test('stripReasoning: несколько блоков и без think не меняет текст', () => {
+    assert.equal(stripReasoning('<think>a</think>mid<think>b</think>end'), 'midend');
+    assert.equal(stripReasoning('обычный пост'), 'обычный пост');
+    assert.equal(stripReasoning(''), '');
+});
+
+test('assemblePromptParts: пост обёрнут в <post>, хвост — напоминание задачи', () => {
+    const { user } = assemblePromptParts({
+        templateText: 'T {{CONTRACT}}',
+        postText: '<think>рассуждения</think>Текст поста.',
+        maxCount: 1,
+    });
+    assert.ok(!user.includes('рассуждения'), 'reasoning не утекает в user');
+    assert.match(user, /<post>\nТекст поста\.\n<\/post>/);
+    assert.match(user, /Respond ONLY with the artifact pair/);
+    assert.match(user, /Do not retell, clean up or reformat/);
+});
+
+test('assemblePromptParts: напоминание на английском (кириллицы нет в служебных строках)', () => {
+    const { user } = assemblePromptParts({ templateText: 'x', postText: 'Текст.', maxCount: 1 });
+    const tail = user.slice(user.indexOf('</post>'));
+    assert.ok(!/\p{Script=Cyrillic}/u.test(tail), 'служебное напоминание — только английский');
+});

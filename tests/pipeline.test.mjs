@@ -206,7 +206,7 @@ test('источник profile: generateText получает части system/
     assert.equal(received.profile.sourceConfig.profileId, 'prof-1');
     assert.match(received.system, /ШАБЛОН/);
     assert.match(received.system, /TOOL — DIEGETIC HTML/);
-    assert.match(received.user, /^TASK: Create 1 artifact pair/);
+    assert.match(received.user, /^TASK: Design new diegetic HTML object/);
     assert.match(received.user, /Post \(the artifact target\):/);
     assert.equal(typeof received.signal?.aborted, 'boolean');
     assert.ok(readVerifiedPayload(msg, 0));

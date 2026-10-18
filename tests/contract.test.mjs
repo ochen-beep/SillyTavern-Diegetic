@@ -141,8 +141,10 @@ test('контракт учит схеме мета и закрытию фенс
 
 test('assemblePromptParts: задача — первой строкой user-сообщения', () => {
     const withCtx = assemblePromptParts({ templateText: 'T {{CONTRACT}}', postText: 'P', contextBlock: 'ctx', maxCount: 2 });
-    assert.match(withCtx.user, /^TASK: Create 2 artifact pair\(s\)/);
+    assert.match(withCtx.user, /^TASK: Design new diegetic HTML object/);
+    assert.ok(!/Create \d+ artifact pair/.test(withCtx.user), 'количество не дублируется в user — дубль провоцировал «нарежь пост на части»');
+    assert.ok(!/from the post at the bottom/.test(withCtx.user), '«from the post» читалось как «переработай пост»');
     assert.match(withCtx.user, /Post \(the artifact target\):/);
     const noCtx = assemblePromptParts({ templateText: 'T', postText: 'P', maxCount: 1 });
-    assert.match(noCtx.user, /^TASK: Create 1 artifact pair\(s\)/);
+    assert.match(noCtx.user, /^TASK: Design new diegetic HTML object/);
 });

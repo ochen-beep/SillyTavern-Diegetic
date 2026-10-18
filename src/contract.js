@@ -77,10 +77,14 @@ export function assemblePromptParts({ templateText, postText, contextBlock = '',
     const filled = withContract.replace(/\{\{MAX_COUNT\}\}/gu, String(maxCount));
     const post = stripReasoning(postText);
     // Задача — первой строкой: длинный контекст (персоны/лор) не должен
-    // восприниматься как основное содержимое запроса.
-    const task = `TASK: Create ${maxCount} artifact pair(s) from the post at the bottom, exactly as the system contract requires.`;
+    // восприниматься как основное содержимое запроса. Без количества (оно
+    // живёт в контракте: дублирование провоцировало «нарежь пост на части»)
+    // и без «from the post» (читалось как «переработай текст поста»).
+    const task = 'TASK: Design new diegetic HTML object(s) for the scene in the post below,'
+        + ' following the system contract. The post is source material to read — never text to output.';
+    const background = ' The context in the middle is background only — it is never the artifact target.';
     const user = contextBlock
-        ? `${task} The context below is background only — it is never the artifact target.\n\nContext of earlier messages:\n${contextBlock}\n\nPost (the artifact target):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`
+        ? `${task}${background}\n\nContext of earlier messages:\n${contextBlock}\n\nPost (the artifact target):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`
         : `${task}\n\nPost (the artifact target):\n<post>\n${post}\n</post>${POST_TASK_REMINDER}`;
     return { system: filled.trim(), user };
 }

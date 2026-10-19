@@ -130,6 +130,7 @@ test('assemblePromptParts: пост обёрнут в <post>, хвост — н�
     assert.match(user, /<post>\nТекст поста\.\n<\/post>/);
     assert.match(user, /Respond ONLY with the artifact pair/);
     assert.match(user, /Do not retell, clean up or reformat/);
+    assert.match(user, /Prefer a context-specific living object or environment with causal, tactile interaction/);
 });
 
 test('assemblePromptParts: напоминание на английском (кириллицы нет в служебных строках)', () => {

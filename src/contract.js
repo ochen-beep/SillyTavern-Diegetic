@@ -53,7 +53,9 @@ export function stripReasoning(text) {
 // отвечает пересказом поста. Напоминание в хвосте работает на recency.
 const POST_TASK_REMINDER = '\n\nRespond ONLY with the artifact pair(s) defined by the system contract'
     + ' above: one <!--DIEGETIC {...}--> comment + one ```html fenced block each.'
-    + ' Do not retell, clean up or reformat the post text.';
+    + ' Do not retell, clean up or reformat the post text.'
+    + ' Prefer a context-specific living object or environment with causal, tactile interaction'
+    + ' over a static panel whose clicks only replace text.';
 
 /**
  * Раздельная сборка: system = шаблон+контракт, user = контекст+пост.

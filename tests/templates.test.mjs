@@ -30,10 +30,20 @@ test('universal: скевоморфизм, обязательная интера
   assert.match(uni, /Russian for all in-universe text/u);
 });
 
-test('TestDie: свобода формы, масштаба и сложности', () => {
-  assert.match(testDie, /CREATIVE FREEDOM/iu);
-  assert.match(testDie, /game|simulation|puzzle/iu);
-  assert.match(testDie, /Do not make every artifact a phone, letter/iu);
+test('TestDie: законченная деятельность и narrative pulse', () => {
+  assert.match(testDie, /Build a finished thing/iu);
+  assert.match(testDie, /NARRATIVE PULSE/iu);
+  assert.match(testDie, /PRIVATE CANDIDATE PASS/iu);
+  assert.match(testDie, /causal state that persists and changes/iu);
+  assert.match(testDie, /slide index, step index/iu);
+  assert.match(testDie, /materially different states/iu);
+  assert.match(testDie, /must never be the whole interaction/iu);
+  assert.match(testDie, /implement its actual activity/iu);
+  assert.match(testDie, /ANTI-TEMPLATE RULES/iu);
+  assert.match(testDie, /top HUD\/metrics strip and a bottom commentary\/readout box/iu);
+  assert.match(testDie, /reader-facing instructions/iu);
+  assert.match(testDie, /prefers-reduced-motion/iu);
+  assert.match(testDie, /close local fallback/iu);
   assert.match(testDie, /\{\{CONTRACT\}\}/u);
 });
 

@@ -162,32 +162,6 @@ test('частичный отсев: валидная пара записана,
     );
 });
 
-test('abort mid-flight: устаревший прогон ничего не пишет', async () => {
-    const { deps, msg } = makeDeps();
-    let resolveGen;
-    deps.generateText = () => new Promise((res) => { resolveGen = res; });
-    const p = createPipeline(deps);
-    const runPromise = p.run(0);
-    await new Promise((r) => setTimeout(r, 0)); // даём прогону дойти до generateText
-    deps.coordinator.bumpMessageRevision(0);   // абортит контроллер текущего прогона
-    resolveGen(RESP);                          // транспорт, игнорирующий AbortSignal
-    await runPromise;
-    assert.equal(readRawPayload(msg, 0), null, 'commit-гард: не-current прогон не пишет');
-});
-
-test('правка прозы во время генерации: digest-гард не даёт записать', async () => {
-    const { deps, msg } = makeDeps();
-    let resolveGen;
-    deps.generateText = () => new Promise((res) => { resolveGen = res; });
-    const p = createPipeline(deps);
-    const runPromise = p.run(0);
-    await new Promise((r) => setTimeout(r, 0));
-    msg.swipes[0] = PROSE + ' Тишина.'; // пользовательская правка под ногами
-    resolveGen(RESP);
-    await runPromise;
-    assert.equal(readRawPayload(msg, 0), null);
-});
-
 test('isExcluded: подстрока без учёта регистра/кавычек, пустые фразы игнорируются', () => {
     assert.equal(isExcluded('Он сказал: «Стой!» и ушёл.', ['стой']), true);
     assert.equal(isExcluded('Спокойная сцена.', ['СТОЙ', '']), false);
@@ -300,38 +274,104 @@ test('fillImageSlots: аборт прогона (свайп/правка) отм
         const fill = p.fillImageSlots(0);
         await new Promise(r => setTimeout(r, 10)); // дать заливке дойти до generate
         assert.ok(gotSignal, 'сигнал доходит до URIS-моста');
-        deps.coordinator.bumpMessageRevision(0); // свайп/правка поста
+        deps.coordinator.bumpMessageRevision(msg.extra.dg_id); // свайп/правка поста (ключ прогона — dg_id)
         await fill;
         assert.ok(gotSignal.aborted, 'мост получил аборт');
         assert.ok(!readVerifiedPayload(msg, 0).artifacts[0].html.includes('data-dg-img-state'), 'слот сброшен из loading');
     } finally { delete globalThis.URIS; }
 });
 
-// ── Тихие сбросы завершённого ответа: должны шуметь warn-тостом ──
+// ── Смена текста за время генерации: ответ спасается, а не выбрасывается ──
 
-test('устаревший прогон: ответ пришёл после свайпа/правки — warn, payload не записан', async () => {
+test('устаревший прогон без смены текста: ответ спасён и показан', async () => {
     const { deps, msg, notifications } = makeDeps();
     deps.notify.warn = (m) => notifications.push(['warn', m]);
-    // Транспорт, игнорирующий AbortSignal (напр. CM): ответ дошёл, но прогон
-    // уже сменился правкой/свайпом за время генерации.
-    deps.generateText = async () => { deps.coordinator.bumpMessageRevision(0); return RESP; };
+    // Транспорт, игнорирующий AbortSignal (напр. CM): ревизия поднялась
+    // (свайп туда-обратно, пустая правка), текст слота не менялся.
+    deps.generateText = async () => { deps.coordinator.bumpMessageRevision(msg.extra.dg_id); return RESP; };
     await createPipeline(deps).run(0);
-    assert.equal(readRawPayload(msg, 0), null, 'оплаченный ответ не переписывает чужой вариант');
-    assert.ok(notifications.some(([k, m]) => k === 'warn' && /не записан/.test(m)), 'потеря ответа не молчалива');
-    assert.ok(!notifications.some(([k]) => k === 'ready'));
+    const p = readVerifiedPayload(msg, 0);
+    assert.ok(p, 'текст тот же — payload верифицируется');
+    assert.equal(p.artifacts[0].type, 'phone');
+    assert.ok(notifications.some(([k]) => k === 'ready'), 'оплаченный ответ записан');
 });
 
-test('пост изменился за время генерации без ревизии — warn, payload не записан', async () => {
+test('пост изменился за время генерации: payload спасён с исходным дайджестом', async () => {
     const { deps, msg, notifications } = makeDeps();
-    deps.notify.warn = (m) => notifications.push(['warn', m]);
     deps.generateText = async () => {
         msg.mes = PROSE + ' Дописано.'; // прямая мутация мимо MESSAGE_EDITED
         msg.swipes[0] = msg.mes;
         return RESP;
     };
     await createPipeline(deps).run(0);
-    assert.equal(readRawPayload(msg, 0), null, 'дайджест не совпал — запись не прошла');
+    const raw = readRawPayload(msg, 0);
+    assert.ok(raw, 'оплаченный ответ не выбрасывается');
+    assert.equal(raw.contentDigest, contentDigest(PROSE), 'штамп — исходный текст');
+    assert.equal(readVerifiedPayload(msg, 0), null, 'для нового текста он stale — усыновит rebind');
+    assert.ok(notifications.some(([k, m]) => k === 'ready' && /пост изменился/.test(String(m))));
+});
+
+test('свайп во время генерации: ответ спасается в СВОЙ слот, чужой не тронут', async () => {
+    const { deps, msg } = makeDeps();
+    deps.generateText = async () => {
+        msg.swipes = [PROSE, 'Совсем другой текст поста.'];
+        msg.swipe_info = [{}, {}];
+        msg.swipe_id = 1;
+        deps.coordinator.bumpMessageRevision(msg.extra.dg_id);
+        return RESP;
+    };
+    await createPipeline(deps).run(0);
+    const p = readRawPayload(msg, 0);
+    assert.ok(p, 'артефакты дождались слота исходного варианта');
+    assert.equal(p.contentDigest, contentDigest(PROSE));
+    assert.ok(readVerifiedPayload(msg, 0), 'свайп назад показывает их без перегенерации');
+    assert.equal(readRawPayload(msg, 1), null, 'вариант 1 не загрязнён');
+});
+
+test('поздний ответ старого прогона не затирает свежие артефакты поста', async () => {
+    const { deps, msg, notifications } = makeDeps();
+    deps.notify.warn = (m) => notifications.push(['warn', m]);
+    deps.generateText = async () => {
+        // Конкурирующий (более новый) прогон успел закоммитить и сменить текст
+        msg.mes = PROSE + ' Дописано.';
+        msg.swipes[0] = msg.mes;
+        writePayload(msg, 0, stampPayload(msg, 0, [
+            { id: 'fresh:0', type: 'note', anchor: 'x', status: 'ok', html: '<body>fresh</body>', bytes: 14, createdAt: 2, profileId: 'p' },
+        ]));
+        return RESP; // запоздавший ответ прежнего прогона
+    };
+    await createPipeline(deps).run(0);
+    const p = readVerifiedPayload(msg, 0);
+    assert.ok(p?.artifacts[0].html.includes('<body>fresh</body>'), 'свежий payload цел');
     assert.ok(notifications.some(([k, m]) => k === 'warn' && /не записан/.test(m)));
+});
+
+test('прогон ключуется dg_id: отмена по свежему индексу находит, по сместившемуся индексу — нет', async () => {
+    const { deps, msg } = makeDeps();
+    let resolveGen;
+    deps.generateText = () => new Promise((res) => { resolveGen = res; });
+    const runPromise = createPipeline(deps).run(0);
+    await new Promise((r) => setTimeout(r, 0)); // dg_id создан, прогон в координаторе
+    const dgId = msg.extra.dg_id;
+    assert.equal(deps.coordinator.abortKind('0', 'gen'), false, 'индекс — не ключ прогона');
+    assert.equal(deps.coordinator.abortKind(dgId, 'gen'), true, 'отмена по dg_id работает');
+    resolveGen(RESP); // транспорт, игнорирующий AbortSignal
+    await runPromise;
+    assert.equal(readRawPayload(msg, 0), null, 'отменённый ответ не коммитится');
+});
+
+test('поздний ответ отменённого прогона не записывается (transport ignore-abort)', async () => {
+    const { deps, msg } = makeDeps();
+    let resolveGen;
+    deps.generateText = () => new Promise((res) => { resolveGen = res; });
+    const p = createPipeline(deps);
+    const runPromise = p.run(0);
+    await new Promise((r) => setTimeout(r, 0));
+    deps.coordinator.abortKind(msg.extra.dg_id, 'gen'); // клик ◆ = отмена
+    resolveGen(RESP);
+    await runPromise;
+    assert.equal(readRawPayload(msg, 0), null, 'пользователь отказался от результата');
+    assert.equal(msg.mes, PROSE, 'текст не тронут');
 });
 
 test('артефакт вовсе без якоря — status ok (в конец поста), а не orphan', async () => {

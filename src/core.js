@@ -25,6 +25,19 @@ export const settingsStorage = {
 // settings.json читается сервером, localforage не покидает браузер.
 const lf = () => { try { return globalThis.SillyTavern?.libs?.localforage ?? null; } catch { return null; } };
 
+/** UUID v4. crypto.randomUUID есть только в secure context — SillyTavern по
+ *  plain-http LAN-адресу в Safari/WebKit его не имеет (генерация падала с
+ *  «crypto.randomUUID is not a function»). getRandomValues доступен везде. */
+export function randomId() {
+    const c = globalThis.crypto;
+    if (typeof c?.randomUUID === 'function') return c.randomUUID();
+    const b = c.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 export async function getApiKey(profileId) {
     const store = lf();
     if (!store || !profileId) return '';

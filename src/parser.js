@@ -82,9 +82,11 @@ function extractFence(segment) {
  * Контракт запрещает отказ, поэтому «мусорный» ответ — это просто errors
  * без артефактов; отдельной семантики «нет» не существует.
  * Размер артефакта не ограничен: уплаченный ответ обязан сохраняться всегда.
- * Опции: { maxCount = 5 }.
+ * maxCount — просьба из контракта, а не лимит хранилища: всё, что
+ * распарсилось, сохраняется (обрезка = выброшенная оплата); превышение
+ * заметно вызывающему по числу артефактов.
  */
-export function parseDiegeticResponse(raw, { maxCount = 5 } = {}) {
+export function parseDiegeticResponse(raw) {
     const text = String(raw ?? '');
     const errors = [];
     COMMENT_RE.lastIndex = 0;
@@ -123,11 +125,5 @@ export function parseDiegeticResponse(raw, { maxCount = 5 } = {}) {
         const full = /<body/i.test(html) ? html : `<body>\n${html}\n</body>`;
         artifacts.push({ type: String(meta.type || 'unknown'), anchor: String(meta.anchor || ''), html: full });
     }
-    // Обрезка сверх лимита — тоже «отброшено»: попадает в errors, чтобы тост
-    // показывал, почему при «N артефактов» в ответе их меньше.
-    const kept = artifacts.slice(0, Math.max(1, maxCount));
-    if (artifacts.length > kept.length) {
-        errors.push(`maxCount: ${artifacts.length - kept.length} over limit ${maxCount}`);
-    }
-    return { artifacts: kept, errors };
+    return { artifacts, errors };
 }

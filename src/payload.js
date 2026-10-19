@@ -17,6 +17,7 @@
 
 import { contentDigest, isViableMessageText } from './digest.js';
 import { readEntry, writeEntry, deleteEntry } from './store.js';
+import { randomId } from './core.js';
 
 // Остался для миграции/clean: старое хранилище жило под этим ключом в extra.
 export const PAYLOAD_KEY = 'dg';
@@ -34,7 +35,7 @@ export function dgMessageId(msg, { create = false } = {}) {
     }
     if (typeof msg.extra.dg_id === 'string' && msg.extra.dg_id) return msg.extra.dg_id;
     if (!create) return null;
-    msg.extra.dg_id = crypto.randomUUID();
+    msg.extra.dg_id = randomId();
     return msg.extra.dg_id;
 }
 
@@ -115,13 +116,16 @@ export function readVerifiedPayload(msg, swipeIdx = 0) {
 }
 
 /** Собрать payload, проштампованный дайджестом ТЕКУЩЕГО текста варианта.
- *  null на заглушке стрима — payload на '...' не пишем никогда. */
-export function stampPayload(msg, swipeIdx, artifacts) {
+ *  opts.digest — штамповать заданным (исходным) дайджестом: спасение
+ *  ответа, чей текст уехал за время генерации; viability исходника тогда
+ *  уже проверена пайплайном. null на заглушке стрима — payload на '...' не
+ *  пишем никогда. */
+export function stampPayload(msg, swipeIdx, artifacts, { digest } = {}) {
     const text = variantText(msg, swipeIdx);
-    if (!isViableMessageText(text)) return null;
+    if (digest === undefined && !isViableMessageText(text)) return null;
     return {
         schema: PAYLOAD_SCHEMA,
-        contentDigest: contentDigest(text),
+        contentDigest: digest ?? contentDigest(text),
         generatedAt: Date.now(),
         artifacts: Array.isArray(artifacts) ? artifacts : [],
     };

@@ -106,3 +106,17 @@ test('clearPayload: запись удаляется', () => {
     assert.equal(readRawPayload(msg, 0), null);
     assert.equal(clearPayload(msg, 0), false, 'повторная очистка — false');
 });
+
+test('dg_id создаётся и без crypto.randomUUID (plain-http Safari: secure context)', () => {
+    // Safari вне secure context не имеет randomUUID — генерация падала с «сбой».
+    const realCrypto = globalThis.crypto;
+    Object.defineProperty(globalThis, 'crypto', { value: { getRandomValues: realCrypto.getRandomValues.bind(realCrypto) }, configurable: true });
+    try {
+        const msg = makeMsg();
+        const id = dgMessageId(msg, { create: true });
+        assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, 'UUID v4 из getRandomValues');
+        assert.equal(id, dgMessageId(msg), 'идемпотентно — id уже записан');
+    } finally {
+        Object.defineProperty(globalThis, 'crypto', { value: realCrypto, configurable: true });
+    }
+});

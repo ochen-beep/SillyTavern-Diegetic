@@ -53,8 +53,22 @@ test('abortKind: отменяет только свой вид, слот чис�
   assert.equal(gen.ctrl.signal.aborted, false);
   assert.equal(c.abortKind(1, 'gen'), true);
   assert.equal(gen.ctrl.signal.aborted, true);
+  assert.equal(gen.canceled, true, 'пользователь отказался от результата');
   assert.equal(c.isCurrent(gen), false, 'отменённый прогон больше не current');
-  assert.equal(c.endRun(gen), false, 'слот уже очищен — следующий клик стартует новый прогон');
+  assert.equal(c.abortKind(1, 'gen'), true, 'повторный клик в окне размотки — снова отмена');
+  assert.equal(c.endRun(gen), true, 'слот у владельца — размотка снимет его');
+  assert.equal(c.abortKind(1, 'gen'), false, 'после размотки клик стартует новый прогон');
+});
+
+test('abortKind ставит canceled, bumpMessageRevision — нет (отмена ≠ правка)', () => {
+  const c = createGenerationCoordinator();
+  const canceled = c.beginRun(1);
+  c.abortKind(1, 'gen');
+  const edited = c.beginRun(2);
+  c.bumpMessageRevision(2);
+  assert.equal(canceled.canceled, true);
+  assert.equal(edited.canceled, false, 'правка — не отказ от результата: поздний ответ спасается');
+  assert.equal(edited.ctrl.signal.aborted, true);
 });
 
 test('abortKind: заливка фото отменяется независимо от генерации', () => {

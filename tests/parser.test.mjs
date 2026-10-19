@@ -76,10 +76,11 @@ test('валидации: ``` внутри — отброшен', () => {
   assert.equal(r.artifacts.length, 0);
 });
 
-test('maxCount режет количество', () => {
+test('превышение maxCount не режет: всё оплаченное сохраняется', () => {
   const two = okPair + '\n' + `<!--DIEGETIC {"type":"note","anchor":"записка"}-->\n\`\`\`html\n<body>2</body>\n\`\`\``;
-  const r = parseDiegeticResponse(two, { maxCount: 1 });
-  assert.equal(r.artifacts.length, 1);
+  const r = parseDiegeticResponse(two);
+  assert.equal(r.artifacts.length, 2, 'обрезка = выброшенная оплата');
+  assert.deepEqual(r.errors, []);
 });
 
 test('мусор вместо ответа — errors без артефактов', () => {
@@ -143,12 +144,12 @@ test('валидная пара после битой тоже парсится'
   assert.ok(r.errors.some(e => e.startsWith('bad meta JSON')));
 });
 
-test('maxCount-обрезка не молчалива: error-запись с числом лишних', () => {
+test('лишние артефакты не попадают в errors: это не потеря', () => {
   const three = okPair + '\n' + `<!--DIEGETIC {"type":"b","anchor":"x"}-->\n\`\`\`html\n<body>2</body>\n\`\`\``
       + '\n' + `<!--DIEGETIC {"type":"c","anchor":"x"}-->\n\`\`\`html\n<body>3</body>\n\`\`\``;
-  const r = parseDiegeticResponse(three, { maxCount: 1 });
-  assert.equal(r.artifacts.length, 1);
-  assert.ok(r.errors.some(e => /maxCount: 2 over limit 1/.test(e)), 'обрезанные артефакты видны в errors');
+  const r = parseDiegeticResponse(three);
+  assert.equal(r.artifacts.length, 3);
+  assert.deepEqual(r.errors, [], 'ошибка — только реальная потеря артефакта');
 });
 
 test('незакрытый ```html — контент до конца ответа восстанавливается', () => {

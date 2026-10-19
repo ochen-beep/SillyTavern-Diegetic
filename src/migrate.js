@@ -143,7 +143,7 @@ export function migrateSendDateKeys() {
             const oldKey = msg.swipe_info?.[idx]?.send_date ?? msg.send_date ?? null;
             if (!oldKey || !readEntry(oldKey)) continue;
             const newKey = `${dgMessageId(msg, { create: true })}:${idx}`;
-            if (newKey === oldKey || readEntry(newKey)) continue; // занято — старое подберёт gcStore
+            if (newKey === oldKey || readEntry(newKey)) continue; // занято — старое останется безвредной сиротой
             // Зеркало могло быть не загружено (readEntry вернул null выше) — тогда
             // ничего не делаем: миграция повторится на следующем prepareChat.
             writeEntry(newKey, readEntry(oldKey));

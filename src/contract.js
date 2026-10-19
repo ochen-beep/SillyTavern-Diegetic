@@ -11,8 +11,8 @@ you do not decide whether to make one — you only choose the type, medium and c
 Each artifact is exactly one pair:
 1) an HTML comment \`<!--DIEGETIC {"type":"<type>","anchor":"<verbatim short phrase from the post>"}-->\`
 2) immediately followed by a single \`\`\`html fenced block containing a full document with \`<body>...</body>\`.
-- "anchor" — a VERBATIM short phrase (2–6 words) copied from the post, next to which the artifact
-  is embedded into the scene. Do not paraphrase, do not alter punctuation. The phrase must occur once.
+- "anchor" — a VERBATIM short phrase (2–6 words) copied character-for-character from the post
+  in the post's own language — never translate, transliterate or paraphrase it. The phrase must occur once.
 - Triple backticks inside the fenced block are forbidden. Keep the artifact compact and self-contained;
   external libraries only when the medium truly requires them; fonts via @import are always fine.
 - Height follows content: no min-height/height: 100vh (or 100svh/100dvh) on body or the scene —

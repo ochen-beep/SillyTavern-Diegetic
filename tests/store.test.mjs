@@ -1,8 +1,8 @@
 // tests/store.test.mjs — файловое хранилище: миграция extra-эпохи, перенос
-// send_date-ключей и GC. Сеть не ходит: fetch не вызывается (только зеркало).
+// send_date-ключей, гонки загрузки/записи. Сеть — только через подменённый fetch.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { _testSetEntries, readEntry, writeEntry, deleteEntry, migrateExtraToStore, gcStore } from '../src/store.js';
+import { _testSetEntries, readEntry, writeEntry, deleteEntry, migrateExtraToStore, loadStore } from '../src/store.js';
 import { migrateSendDateKeys } from '../src/migrate.js';
 import { dgMessageId } from '../src/payload.js';
 
@@ -10,11 +10,11 @@ const P = (digest) => ({ schema: 1, contentDigest: digest, generatedAt: 1, artif
 const keyOf = (msg, idx = 0) => `${dgMessageId(msg, { create: true })}:${idx}`;
 
 let savedMeta = 0;
-function mockCtx(chat) {
+function mockCtx(chat, storeId = 'test-store') {
     globalThis.SillyTavern = {
         getContext: () => ({
             chat,
-            chatMetadata: { dg: { storeId: 'test-store' } },
+            chatMetadata: { dg: { storeId } },
             saveMetadataDebounced: () => { savedMeta++; },
             getRequestHeaders: () => ({}),
         }),
@@ -83,24 +83,48 @@ test('перенос: занятый новый ключ не перезапис
     _testSetEntries({ 'old-date': P('old'), [`${id}:0`]: P('new') });
     assert.equal(migrateSendDateKeys(), false, 'перенос не нужен');
     assert.equal(readEntry(`${id}:0`).contentDigest, 'new', 'свежая запись цела');
-    assert.ok(readEntry('old-date'), 'старый ключ оставлен — подберёт gcStore');
+    assert.ok(readEntry('old-date'), 'старый ключ остаётся безвредной сиротой (не чистим — риск потерять payload при сбое save)');
 });
 
-test('gcStore: записи без живого сообщения (по dg_id) удаляются', () => {
-    const keep = { mes: 't', swipes: ['a', 'b'], swipe_id: 0, extra: {} };
-    const keepId = dgMessageId(keep, { create: true });
-    _testSetEntries({
-        [`${keepId}:0`]: P('a'),
-        [`${keepId}:1`]: P('slot1'),
-        'gone': P('b'),
-        'old-date': P('legacy'),
-    });
-    mockCtx([keep]);
-    gcStore();
-    assert.ok(readEntry(`${keepId}:0`), 'живой слот цел');
-    assert.ok(readEntry(`${keepId}:1`), 'слот в пределах swipes.length цел');
-    assert.equal(readEntry('gone'), null, 'запись без сообщения удалена');
-    assert.equal(readEntry('old-date'), null, 'legacy-ключ после переноса удалён');
+test('loadStore мержит серверный снимок с записями, легшими за время fetch', async () => {
+    // Поздний GET не затирает коммит: раньше было _mirror.entries = doc.entries.
+    const doc = { v: 2, entries: { server: P('srv') } };
+    // delete globalThis.fetch снёс бы встроенный fetch Node навсегда —
+    // последующие тесты получили бы sync-ReferenceError вместо отказа сети.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, json: async () => doc });
+    try {
+        _testSetEntries(null);
+        mockCtx([{ mes: 't', send_date: 'd0' }]);
+        const loading = loadStore();
+        writeEntry('local', P('local')); // «коммит» пайплайна во время GET
+        await loading;
+        assert.equal(readEntry('server')?.contentDigest, 'srv', 'серверные записи на месте');
+        assert.equal(readEntry('local')?.contentDigest, 'local', 'закоммиченное за fetch не стёрто');
+    } finally { globalThis.fetch = realFetch; }
+});
+
+test('upload снимает имя и тело в момент постановки: коммит не уедет в файл другого чата', async () => {
+    const uploads = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+        if (String(url).includes('/api/files/upload')) {
+            const raw = JSON.parse(opts.body);
+            uploads.push([raw.name, JSON.parse(Buffer.from(raw.data, 'base64').toString())]);
+            return { ok: true };
+        }
+        return { ok: true, json: async () => null };
+    };
+    try {
+        _testSetEntries({});
+        mockCtx([{ mes: 't' }]);
+        writeEntry('m1:0', P('commit'));
+        mockCtx([], 'other-store'); // CHAT_CHANGED до исполнения upload
+        await new Promise((r) => setTimeout(r, 10));
+        assert.equal(uploads.length, 1, 'одна запись');
+        assert.equal(uploads[0][0], 'dg_test-store.json', 'файл СВОЕГО чата, а не нового');
+        assert.ok(uploads[0][1].entries['m1:0'], 'коммит в теле upload, а не новое пустое зеркало');
+    } finally { globalThis.fetch = realFetch; }
 });
 
 test('writeEntry до загрузки — в pending, после loadStore применяется', async () => {

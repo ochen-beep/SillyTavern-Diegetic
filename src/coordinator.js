@@ -12,14 +12,16 @@
  *
  * Прогон CURRENT ⇔ все три условия: он всё ещё владеет слотом контроллера
  * своего сообщения (identity), его revision не изменился, его снапшот epoch
- * активен. Commit-гард пайплайна требует isCurrent(run), чтобы устаревший
- * прогон (например, с транспортом, игнорирующим AbortSignal) не перезаписал
- * более новый.
+ * активен и прогон не отменён пользователем (canceled).
+ *
+ * Ключ слота — СТАБИЛЬНЫЙ dg_id сообщения (не индекс mesid): ST перенумеровывает
+ * mesid при удалении/перемещении постов, и клик отмены по свежему индексу не
+ * находил бы прогон, запущенный под старым.
  */
 
 /**
  * @returns {{
- *   beginRun(messageId: number|string, kind?: 'gen'|'fill'): { id: string, token: number, ctrl: AbortController, revision: number, epoch: number },
+ *   beginRun(messageId: number|string, kind?: 'gen'|'fill'): { id: string, token: number, ctrl: AbortController, revision: number, epoch: number, kind: 'gen'|'fill', canceled: boolean },
  *   isCurrent(run: { id: string, ctrl: AbortController, revision: number, epoch: number } | null | undefined): boolean,
  *   endRun(run: { id: string, ctrl: AbortController } | null | undefined): boolean,
  *   abortKind(messageId: number|string, kind: 'gen'|'fill'): boolean,
@@ -30,7 +32,7 @@
 export function createGenerationCoordinator() {
     /** @type {Record<string, number>} per-message revision counters */
     const revisions = {};
-    /** @type {Record<string, {ctrl: AbortController, kind: 'gen'|'fill'}>} per-message run slots */
+    /** @type {Record<string, object>} слот = сам объект прогона (kind, canceled живут в нём) */
     const controllers = {};
     let epoch = 0;
     let tokenSeq = 0;
@@ -41,7 +43,8 @@ export function createGenerationCoordinator() {
      * Инвалидация ОДНОГО сообщения: поднять revision и абортить его текущий
      * прогон (любого вида — свайп убивает и генерацию, и заливку фото).
      * Чужие сообщения не затрагиваются. Вызывать из onMsgSwiped / onMsgEdited
-     * (и regenerate).
+     * (и regenerate). Не ставит canceled: правка — не отказ от результата,
+     * поздний ответ такого прогона пайплайн спасает.
      * @param {number|string} messageId
      */
     function bumpMessageRevision(messageId) {
@@ -70,9 +73,12 @@ export function createGenerationCoordinator() {
     function beginRun(messageId, kind = 'gen') {
         const id = String(messageId);
         controllers[id]?.ctrl.abort();
-        const ctrl = new AbortController();
-        controllers[id] = { ctrl, kind };
-        return { id, token: ++tokenSeq, ctrl, revision: revisionOf(id), epoch };
+        const run = {
+            id, token: ++tokenSeq, ctrl: new AbortController(),
+            revision: revisionOf(id), epoch, kind, canceled: false,
+        };
+        controllers[id] = run;
+        return run;
     }
 
     /**
@@ -82,29 +88,31 @@ export function createGenerationCoordinator() {
      */
     function isCurrent(run) {
         if (!run) return false;
-        return controllers[run.id]?.ctrl === run.ctrl
-            && revisionOf(run.id) === run.revision
-            && run.epoch === epoch;
+        const rec = controllers[run.id];
+        return rec === run && !rec.canceled
+            && revisionOf(run.id) === run.revision && run.epoch === epoch;
     }
 
     /**
      * Очистить слот прогона — но только если прогон всё ещё владелец.
-     * finally-блок сменённого прогона не должен тронуть слот прогона,
-     * который его заменил. Возвращает true, если прогон был владельцем.
+     * finally-блок сменённого/отменённого прогона не должен тронуть слот
+     * прогона, который его заменил. Возвращает true, если прогон был владельцем.
      * @param {{ id: string, ctrl: AbortController } | null | undefined} run
      */
     function endRun(run) {
         if (!run) return false;
-        if (controllers[run.id]?.ctrl !== run.ctrl) return false;
+        if (controllers[run.id] !== run) return false;
         delete controllers[run.id];
         return true;
     }
 
     /**
      * Отменить прогон заданного вида (повторный клик по кнопке = отмена).
-     * true — был живой прогон ЭТОГО вида: слот очищен сразу, чтобы следующий
-     * клик уже запускал новый прогон, не дожидаясь размотки старого. Прогон
-     * другого вида не трогается: ◆ во время заливки фото не убивает её.
+     * true — был живой прогон ЭТОГО вида. Слот НЕ чистится: остаётся до
+     * размотки прогона с флагом canceled — клики в этом окне остаются
+     * отменой (идемпотентно), а не незаметным запуском новой генерации;
+     * endRun снимет слот. Прогон другого вида не трогается: ◆ во время
+     * заливки фото не убивает её.
      * @param {number|string} messageId
      * @param {'gen'|'fill'} kind
      */
@@ -112,7 +120,7 @@ export function createGenerationCoordinator() {
         const id = String(messageId);
         const rec = controllers[id];
         if (!rec || rec.kind !== kind) return false;
-        delete controllers[id];
+        rec.canceled = true;
         rec.ctrl.abort();
         return true;
     }

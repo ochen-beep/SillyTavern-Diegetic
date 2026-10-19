@@ -44,19 +44,23 @@ export function createPipeline(deps) {
         const swipeIdx = msg.swipe_id ?? 0;
         const prose = variantText(msg, swipeIdx);
         if (!isViableMessageText(prose)) return;
-        // payload уже есть — не дублим (force перезаписывает тот же слот).
+        const proseDigest = contentDigest(prose);
+        // Свежий payload (дайджест совпадает с текстом) — не дублим (force
+        // перезаписывает тот же слот). Устаревший не блокирует: его содержание
+        // принадлежит прежнему тексту, этот пост своих артефактов ещё не имел.
         // Чужой payload НЕ блокирует прогон: ST клонирует extra соседнего
         // варианта в слот нового свайпа (script.js:3711) — новый вариант
         // артефактов не имеет, генерируем, а не молча выходим.
         const rawPayload = readRawPayload(msg, swipeIdx);
-        if (!force && rawPayload && !payloadBelongsToOtherVariant(msg, swipeIdx, rawPayload)) return;
-        const proseDigest = contentDigest(prose);
+        if (!force && rawPayload && !payloadBelongsToOtherVariant(msg, swipeIdx, rawPayload)
+            && rawPayload.contentDigest === proseDigest) return;
 
-        const run = deps.coordinator.beginRun(messageId);
-        // Стабильная идентичность поста: за время генерации индексы чата
-        // могут сдвинуться (удаление соседнего поста) — коммит ищет пост по
-        // dg_id, а не по индексу, и пишет результат своему сообщению.
+        // Прогон ключуется стабильным dg_id (не индексом mesid: ST сдвигает
+        // индексы при удалении/перемещении постов — клик отмены по свежему
+        // mesid не находил бы прогон под старым). Тот же dg_id — идентичность
+        // поста для коммита: индекс мог сдвинуться, пост ищем по dg_id.
         const runDgId = dgMessageId(msg, { create: true });
+        const run = deps.coordinator.beginRun(runDgId);
         try {
             // Дескриптор источника собирает хост (index.js) из настроек.
             const profile = deps.getSourceProfile();
@@ -74,14 +78,14 @@ export function createPipeline(deps) {
                 if (e?.name !== 'AbortError') notify.error(`Diegetic: генерация не удалась (${e?.message || e})`);
                 return;
             }
-            if (!deps.coordinator.isCurrent(run)) {
-                // Ответ пришёл, а прогон устарел (свайп/правка/новый запуск за
-                // время генерации): оплаченный ответ выбрасывается — не молчать.
-                notify.warn?.('Diegetic: ответ не записан — прогон устарел (свайп, правка или новый запуск)');
+            if (run.canceled) {
+                // Транспорт, игнорирующий AbortSignal, всё же принёс ответ:
+                // пользователь отказался от результата — не записываем.
+                console.info('[Diegetic] ответ не записан: генерация отменена');
                 return;
             }
 
-            const parsed = parseDiegeticResponse(raw, { maxCount: s.maxPerMessage });
+            const parsed = parseDiegeticResponse(raw);
             if (parsed.artifacts.length === 0) {
                 // Контракт запрещает отказ, так что это именно сбой модели.
                 notify.error(`Diegetic: модель не вернула артефакт (${parsed.errors[0] || 'нет пар комментарий+fence'})`);
@@ -116,29 +120,45 @@ export function createPipeline(deps) {
                 };
             });
 
-            // Commit-гард: прогон актуален и проза не сменилась за время генерации.
-            // Индекс мог сдвинуться (удаление соседа) — пост ищем по dg_id.
+            // Commit: пост ищем по dg_id — индексы чата сдвигаются (удаление
+            // соседа). Ответ оплачен и не выбрасывается: если текст слота уехал
+            // за время генерации (правка/свайп/новый прогон), payload пишется
+            // с ИСХОДНЫМ дайджестом — рендер перепривяжет якоря сам
+            // (rebindPayload), панель покажет запись как stale, а свайп назад
+            // покажет артефакты без перегенерации.
             let live = deps.getMessage(messageId);
             if (!live || dgMessageId(live) !== runDgId) live = deps.getMessageByDgId?.(runDgId) ?? null;
-            if (!live || !deps.coordinator.isCurrent(run) || digestForVariant(live, swipeIdx) !== proseDigest) {
-                // Здесь попадают только завершённые ответы — терять их молча нельзя.
-                notify.warn?.(!live
-                    ? 'Diegetic: ответ не записан — пост исчез за время генерации'
-                    : 'Diegetic: ответ не записан — пост изменился за время генерации');
+            if (!live) {
+                console.info('[Diegetic] ответ не записан: пост исчез за время генерации');
+                notify.warn?.('Diegetic: ответ не записан — пост исчез за время генерации');
                 return;
             }
-
-            const payload = stampPayload(live, swipeIdx, recorded);
-            if (!payload || !writePayload(live, swipeIdx, payload)) return;
+            const liveDigest = digestForVariant(live, swipeIdx);
+            // Поздний ответ устаревшего прогона не затирает свежие артефакты,
+            // уже показанные для текущего текста.
+            const existing = readRawPayload(live, swipeIdx);
+            if (existing && liveDigest === existing.contentDigest && liveDigest !== proseDigest) {
+                console.info('[Diegetic] ответ не записан: у поста уже есть свежие артефакты');
+                notify.warn?.('Diegetic: ответ не записан — пост уже обзавёлся свежими артефактами');
+                return;
+            }
+            const payload = stampPayload(live, swipeIdx, recorded, { digest: proseDigest });
+            if (!payload || !writePayload(live, swipeIdx, payload)) {
+                console.info('[Diegetic] ответ не записан: слот недоступен для записи');
+                return;
+            }
             await deps.persistChat();
             deps.notifyRender?.(messageId);
 
+            const drifted = liveDigest !== proseDigest;
             const orphans = recorded.filter(a => a.status === 'orphan').length;
-            if (orphans > 0) {
-                notify.ready(`Diegetic: артефакт(ов): ${recorded.length} (${orphans} в конец поста — якорь не найден)`);
-            } else {
-                notify.ready(`Diegetic: артефакт(ов): ${recorded.length}`);
-            }
+            const over = recorded.length > s.maxPerMessage
+                ? ` (модель вернула ${recorded.length} при запросе ${s.maxPerMessage})` : '';
+            const notes = [];
+            if (drifted) notes.push('пост изменился за время генерации — якоря перепривязаны');
+            if (orphans > 0) notes.push(`${orphans} в конец поста — якорь не найден`);
+            console.info(`[Diegetic] записано артефакт(ов): ${recorded.length}${drifted ? ' (спасены: текст уехал за время генерации)' : ''}`);
+            notify.ready(`Diegetic: артефакт(ов): ${recorded.length}${over}${notes.length ? ' — ' + notes.join(', ') : ''}`);
 
             if (s.imageMode === 'auto' && recorded.some(a => hasPendingSlots(a.html))) fillImageSlots(messageId);
         } finally {
@@ -160,7 +180,9 @@ export function createPipeline(deps) {
     async function _fillImageSlots(messageId, { artifactId = null, onlyOrdinal = null, removeCardId = null } = {}) {
         const s = deps.settings;
         if (s.imageMode === 'off') return;
-        const run = deps.coordinator.beginRun(messageId, 'fill');
+        const msg0 = deps.getMessage(messageId);
+        if (!msg0) return;
+        const run = deps.coordinator.beginRun(dgMessageId(msg0, { create: true }), 'fill');
         try {
             const read = () => {
                 const m = deps.getMessage(messageId);

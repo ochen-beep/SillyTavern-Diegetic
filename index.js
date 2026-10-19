@@ -22,8 +22,8 @@ import { createInitializationController } from './src/lifecycle.js';
 import { mountPanel, unmountUi, collectRows } from './src/ui.js';
 import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating, deleteArtifact, clearImageCache, openArtifactPopup, saveArtifactById } from './src/render.js';
 import { migrateCurrentChat, migrateSendDateKeys } from './src/migrate.js';
-import { loadStore, migrateExtraToStore, gcStore, deleteStoreFile } from './src/store.js';
-import { variantText, PAYLOAD_KEY } from './src/payload.js';
+import { loadStore, migrateExtraToStore, deleteStoreFile } from './src/store.js';
+import { variantText, PAYLOAD_KEY, dgMessageId } from './src/payload.js';
 import { urisStatus } from './src/images.js';
 import { collectContext } from './src/context.js';
 import { stripReasoning } from './src/contract.js';
@@ -65,13 +65,32 @@ async function getContextBlock(messageId, depth) {
 
 // Обёртка запуска генерации: busy-индикатор на всех кнопках (пост/QR/FAB).
 let _generating = 0;
+function busyEnd() {
+    _generating = Math.max(0, _generating - 1);
+    if (_generating <= 0) setGenerating(false);
+}
 function runBusy(id, opts = {}) {
     _generating++;
     setGenerating(true);
-    return pipeline.run(id, opts).finally(() => {
-        _generating--;
-        if (_generating <= 0) setGenerating(false);
-    });
+    return pipeline.run(id, opts).finally(busyEnd);
+}
+
+// Ключ прогона координатора — dg_id: индекс mesid у живых узлов ST сдвигается
+// при удалении/перемещении постов, и отмена по свежему mesid не находила бы
+// прогон, запущенный под старым индексом (молча стартуя вторую генерацию).
+function dgIdOf(id) {
+    const msg = getMessage(Number(id));
+    return (msg && dgMessageId(msg)) || null;
+}
+
+/** Клик по busy-кнопке ◆ = отмена. Слот прогона держится до размотки, так что
+ *  клики в этом окне остаются отменой (идемпотентно), а не новым запуском. */
+function cancelGen(id) {
+    const dg = dgIdOf(id);
+    if (!dg || !coordinator?.abortKind(dg, 'gen')) return false;
+    busyEnd(); // кнопка гаснет сразу; размотка прогона учтёт счётчик корректно
+    globalThis.toastr?.info?.('Diegetic: генерация отменена');
+    return true;
 }
 
 function getLatestAssistantId() {
@@ -226,7 +245,7 @@ async function init(isCancelled = () => false) {
         runLatest: () => {
             const id = getLatestAssistantId();
             if (id === null) { toastr?.info?.('Diegetic: в чате нет поста ИИ'); return; }
-            if (!coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
+            if (!cancelGen(id)) runBusy(id, { force: true });
         },
         getExclusions: () => String(chatData()?.exclusions ?? ''),
         setExclusions: (text) => {
@@ -256,7 +275,7 @@ async function init(isCancelled = () => false) {
         openArtifact: openArtifactPopup,
         saveArtifact: saveArtifactById,
         runFor: (id) => {
-            if (!coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
+            if (!cancelGen(id)) runBusy(id, { force: true });
         },
         removeArtifact: (msgId, artifactId) => { deleteArtifact(msgId, artifactId); },
     };
@@ -270,15 +289,20 @@ async function init(isCancelled = () => false) {
         settings: () => settings,
         // Повторный ◆ на посте с идущей генерацией = отмена (без нового запуска).
         run: (id) => {
-            if (!coordinator.abortKind(id, 'gen')) runBusy(id, { force: true });
+            if (!cancelGen(id)) runBusy(id, { force: true });
         },
         // 📷 во время заливки фото = отмена заливки; во время генерации —
         // как раньше: новый прогон затирает её.
         fillImageSlots: (id) => {
-            if (!coordinator.abortKind(id, 'fill')) pipeline.fillImageSlots(id);
+            const dg = dgIdOf(id);
+            if (dg && coordinator.abortKind(dg, 'fill')) return;
+            pipeline.fillImageSlots(id);
         },
         // ⏹ на слоте во время заливки — отмена той же заливки.
-        cancelFill: (id) => coordinator.abortKind(id, 'fill'),
+        cancelFill: (id) => {
+            const dg = dgIdOf(id);
+            if (dg) coordinator.abortKind(dg, 'fill');
+        },
         hasPending: (id) => pipeline.hasPendingPhotoSlots(id),
         regenSlot: (id, artifactId, ordinal, cardId) =>
             pipeline.fillImageSlots(id, { artifactId, onlyOrdinal: ordinal, removeCardId: cardId }),
@@ -333,10 +357,9 @@ function bindEvents(ctx) {
     const t = ctx.event_types;
     const pairs = [
         [t.MESSAGE_RECEIVED, onMessageReceived],
-        [t.MESSAGE_SWIPED, (id) => coordinator?.bumpMessageRevision(Number(id))],
-        [t.MESSAGE_EDITED, (id) => coordinator?.bumpMessageRevision(Number(id))],
-        // Событие приходит ПОСЛЕ удаления (id = прошлый chat.length) — GC по чату.
-        [t.MESSAGE_DELETED, () => gcStore()],
+        // Ключ инваллидации — dg_id (совпадает с ключом прогона координатора).
+        [t.MESSAGE_SWIPED, (id) => { const dg = dgIdOf(id); if (dg) coordinator?.bumpMessageRevision(dg); }],
+        [t.MESSAGE_EDITED, (id) => { const dg = dgIdOf(id); if (dg) coordinator?.bumpMessageRevision(dg); }],
         [t.CHAT_CHANGED, () => {
             coordinator?.invalidateAll();
             clearImageCache(); // кэш data:-URL фото привязан к чату — не тащим в новый

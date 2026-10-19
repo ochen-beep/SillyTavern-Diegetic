@@ -14,7 +14,7 @@
 // Осиротевшие записи (удалённый свайп без события) не чистятся — растут
 // медленно и безвредны; если файл раздуется, добавить GC по кнопке.
 
-import { getCtx, chatData, saveChatData } from './core.js';
+import { getCtx, chatData, saveChatData, randomId } from './core.js';
 import { dgMessageId } from './payload.js';
 
 const warn = (...a) => console.warn('[Diegetic]', ...a);
@@ -28,7 +28,7 @@ function storeId() {
     const d = chatData();
     if (!d) return null;
     if (!d.storeId) {
-        d.storeId = crypto.randomUUID();
+        d.storeId = randomId();
         saveChatData();
     }
     return d.storeId;
@@ -53,7 +53,7 @@ function b64encode(text) {
 
 /** Загрузить зеркало чата. Зовётся на init и CHAT_CHANGED до reconcile. */
 export async function loadStore() {
-    _mirror = { entries: {} };
+    const mirror = _mirror = { entries: {} };
     const name = fileName();
     if (name) {
         try {
@@ -61,7 +61,9 @@ export async function loadStore() {
             if (res.ok) {
                 const doc = await res.json().catch(() => null);
                 if (doc?.v === 2 && doc.entries && typeof doc.entries === 'object') {
-                    _mirror.entries = doc.entries;
+                    // Мержим, а не заменяем: пока GET был в полёте, в зеркало
+                    // мог лечь коммит — локальные записи новее снимка сервера.
+                    if (_mirror === mirror) mirror.entries = { ...doc.entries, ...mirror.entries };
                 }
             }
             // 404 = первый запуск на этом чате — пустое зеркало, не ошибка.
@@ -97,16 +99,20 @@ export function deleteEntry(key) {
 }
 
 function scheduleWrite() {
-    _writeChain = _writeChain.then(upload).catch((e) => warn('store: запись:', e));
+    // Имя файла и содержимое фиксируются в момент постановки в очередь:
+    // upload исполняется позже и без снапшота прочитал бы уже СМЕНИВШЕЕСЯ
+    // зеркало (CHAT_CHANGED) и имя чужого чата — коммит текущего потерялся бы.
+    const name = fileName();
+    const body = _mirror ? JSON.stringify({ v: 2, entries: _mirror.entries }) : null;
+    _writeChain = _writeChain.then(() => upload(name, body)).catch((e) => warn('store: запись:', e));
 }
 
-async function upload() {
-    const name = fileName();
-    if (!name || !_mirror) return;
+async function upload(name, body) {
+    if (!name || !body) return;
     const res = await fetch('/api/files/upload', {
         method: 'POST',
         headers: stHeaders(),
-        body: JSON.stringify({ name, data: b64encode(JSON.stringify({ v: 2, entries: _mirror.entries })) }),
+        body: JSON.stringify({ name, data: b64encode(body) }),
     });
     if (!res.ok) throw new Error(`upload ${res.status}`);
 }
@@ -168,28 +174,6 @@ export function migrateExtraToStore() {
     }
     if (changed) scheduleWrite();
     return changed;
-}
-
-/** MESSAGE_DELETED (приходит ПОСЛЕ удаления): выкинуть записи, на которые
- *  больше не ссылается ни одно сообщение чата. Ключи — dg_id:слот; у сообщений
- *  без dg_id записей быть не может (id создаётся только записью/миграцией). */
-export function gcStore() {
-    const chat = getCtx()?.chat;
-    if (!Array.isArray(chat) || !_mirror) return;
-    const valid = new Set();
-    for (const m of chat) {
-        const id = m?.extra?.dg_id;
-        if (typeof id !== 'string' || !id) continue;
-        const slots = Math.max(
-            Array.isArray(m.swipes) ? m.swipes.length : 0,
-            Array.isArray(m.swipe_info) ? m.swipe_info.length : 0,
-            1,
-        );
-        for (let i = 0; i < slots; i++) valid.add(`${id}:${i}`);
-    }
-    for (const k of Object.keys(_mirror.entries)) {
-        if (!valid.has(k)) deleteEntry(k);
-    }
 }
 
 /** Тестовый хук: подменить зеркало без сети (null = «ещё не загружено»). */

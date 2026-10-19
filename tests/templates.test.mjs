@@ -9,13 +9,14 @@ const dir = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
 const files = readdirSync(dir).filter(f => f.endsWith('.md'));
 const uni = readFileSync(join(dir, 'universal.md'), 'utf8');
 const photo = readFileSync(join(dir, 'universal-photo.md'), 'utf8');
+const testDie = readFileSync(join(dir, 'test.md'), 'utf8');
 
-test('в templates/ — ровно две встроенные основы', () => {
-  assert.deepEqual(files.sort(), ['universal-photo.md', 'universal.md']);
+test('в templates/ — три встроенные основы', () => {
+  assert.deepEqual(files.sort(), ['test.md', 'universal-photo.md', 'universal.md']);
 });
 
-test('обе основы: {{CONTRACT}} ровно один раз, без отказных формулировок, на английском', () => {
-  for (const [name, text] of [['universal', uni], ['universal-photo', photo]]) {
+test('все встроенные основы: {{CONTRACT}} ровно один раз, без отказных формулировок, на английском', () => {
+  for (const [name, text] of [['universal', uni], ['universal-photo', photo], ['TestDie', testDie]]) {
     assert.equal(text.split('{{CONTRACT}}').length - 1, 1, `${name}: маркер {{CONTRACT}} обязан быть ровно один`);
     assert.ok(!/pulse:?false|"pulse":\s*false/u.test(text), `${name}: без pulse:false`);
     assert.ok(!/не выдумывай|если импульса нет|you may skip|optional to skip/iu.test(text), `${name}: без отказных лазеек`);
@@ -27,6 +28,13 @@ test('universal: скевоморфизм, обязательная интера
   assert.match(uni, /skeuomorphic/iu);
   assert.match(uni, /Mandatory: ≥1 stateful/u);
   assert.match(uni, /Russian for all in-universe text/u);
+});
+
+test('TestDie: свобода формы, масштаба и сложности', () => {
+  assert.match(testDie, /CREATIVE FREEDOM/iu);
+  assert.match(testDie, /game|simulation|puzzle/iu);
+  assert.match(testDie, /Do not make every artifact a phone, letter/iu);
+  assert.match(testDie, /\{\{CONTRACT\}\}/u);
 });
 
 test('universal-photo: фото через data-dg-img слоты с триггерами', () => {

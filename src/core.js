@@ -56,7 +56,11 @@ export async function setApiKey(profileId, key) {
 
 // Встроенные шаблоны: файлы расширения, отдаются хостом статикой.
 // Путь от import.meta.url — не зависит от схемы монтирования third-party.
-const BUILTIN_FILES = { universal: 'universal.md', 'universal-photo': 'universal-photo.md' };
+const BUILTIN_FILES = {
+    universal: 'universal.md',
+    'universal-photo': 'universal-photo.md',
+    TestDie: 'test.md',
+};
 const _templates = new Map();
 
 export async function getBuiltinTemplate(id = 'universal') {

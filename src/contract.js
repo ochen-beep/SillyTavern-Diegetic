@@ -4,33 +4,20 @@
 
 export const DIEGETIC_CONTRACT = `### TOOL — DIEGETIC HTML (response contract)
 
-For the post you receive, return exactly {{MAX_COUNT}} artifact(s). Making an artifact is MANDATORY:
-you do not decide whether to make one — you only choose the type, medium and content.
+Return exactly {{MAX_COUNT}} artifact(s).
 
-**Response format (DO NOT DEVIATE)**
-Each artifact is exactly one pair:
-1) an HTML comment \`<!--DIEGETIC {"type":"<type>","anchor":"<verbatim short phrase from the post>"}-->\`
-2) immediately followed by a single \`\`\`html fenced block containing a full document with \`<body>...</body>\`.
-- "anchor" — a VERBATIM short phrase (2–6 words) copied character-for-character from the post
-  in the post's own language — never translate, transliterate or paraphrase it. The phrase must occur once.
-- Triple backticks inside the fenced block are forbidden. Keep the artifact compact and self-contained;
-  external libraries only when the medium truly requires them; fonts via @import are always fine.
-- Height follows content: no min-height/height: 100vh (or 100svh/100dvh) on body or the scene —
-  the artifact is embedded in the post and does not need screen height.
-- Refusal is not allowed. An empty reply, "nothing comes to mind", "does not fit" — all contract
-  violations: pure dialogue is a chat on a screen, reflection is a note, a scene change is a signboard.
-  Every post has a suitable medium — find it and execute it.
-- Meta carries EXACTLY the keys "type" and "anchor" — no other keys.
-- ALWAYS close the \`\`\`html fence. An unclosed fence is a contract violation.
-- The artifact is a NEW physical object you design (a note, a ticket, a device, a signboard);
-  it is NEVER a retelling or a reformatting of the post text.
-
-**Example of one pair — format only, never reuse its content:**
-<!--DIEGETIC {"type":"ticket","anchor":"verbatim short phrase from the post"}-->
+For each artifact, output one pair in order:
+<!--DIEGETIC {"type":"<type>","anchor":"<anchor>"}-->
 \`\`\`html
-<!DOCTYPE html><html><head><meta charset="utf-8"><style>.t{font-family:serif}</style></head>
-<body><div class="t"><h3>THEATRE TICKET</h3><p>Row 3, Seat 12 — admit one</p></div></body></html>
-\`\`\``;
+<html>...<body>...</body>...</html>
+\`\`\`
+
+- The metadata comment must contain valid JSON with exactly the keys "type" and "anchor".
+- "type" is a short string label.
+- "anchor" is a verbatim 2–6-word phrase from the post in its original wording; use "" if no suitable anchor exists.
+- Use one \`\`\`html fenced block per artifact and close every fence.
+- Do not place \`\`\` or a JSON DIEGETIC metadata comment inside the artifact HTML.
+- Return the artifact pair(s) only.`;
 
 /** Сигнатура уже вставленного контракта: старые шаблоны с контрактом,
  *  вписанным целиком, не должны получить его вторым экземпляром. */

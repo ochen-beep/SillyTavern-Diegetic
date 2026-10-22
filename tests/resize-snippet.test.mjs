@@ -16,7 +16,7 @@ const body = snippet.replace(/^<script>/, '').replace(/<\/script>$/, '');
 
 /** Мок окна/документа iframe: zoom меняет layout (scrollWidth/scrollHeight),
  *  transform — только rect. clientWidth фиксируем (колонка чата). */
-function mockFrame({ clientWidth, contentW, contentH }) {
+function mockFrame({ clientWidth, contentW, contentH, zoomAffectsScroll = true }) {
     const listeners = {};
     const state = { zoom: 1, transform: '', posts: [] };
     const docEl = {
@@ -37,9 +37,10 @@ function mockFrame({ clientWidth, contentW, contentH }) {
     };
     const bodyEl = {
         style: bodyStyle,
-        // zoom применяется к layout-боксам; floor имитирует округление движка.
-        get scrollWidth() { return Math.round(contentW * state.zoom); },
-        get scrollHeight() { return Math.round(contentH * state.zoom); },
+        // zoomAffectsScroll=true: zoom меняет layout-боксы (Chromium-стандарт).
+        // false — как на «пруде»: scrollWidth остаётся натуральным под zoom.
+        get scrollWidth() { return Math.round(contentW * (zoomAffectsScroll ? state.zoom : 1)); },
+        get scrollHeight() { return Math.round(contentH * (zoomAffectsScroll ? state.zoom : 1)); },
         getBoundingClientRect() {
             const t = state.transform ? parseFloat(state.transform.replace(/^scale\(|\)$/g, '')) : state.zoom;
             return { width: contentW * t, height: contentH * t };
@@ -117,4 +118,18 @@ test('широкий фрейм — масштаб не применяется, 
     for (let i = 0; i < 5; i++) fire(mock, 'resize');
     assert.equal(applied(mock), 1);
     assert.equal(mock.state.posts.at(-1).__dgH, 440);
+});
+
+test('пруд-регрессия: scrollWidth не реагирует на zoom — K НЕ схлопывается', () => {
+    // На canvas-артефакте деление scrollWidth/K дважды учитывало масштаб,
+    // K экспоненциально уходил к нулю — артефакт мигал и исчезал.
+    const mock = mockFrame({ clientWidth: 390, contentW: 660, contentH: 450, zoomAffectsScroll: false });
+    runSnippet(mock);
+    fire(mock, 'load');
+    for (let i = 0; i < 12; i++) fire(mock, 'resize'); // гоняем петлю
+    const k = applied(mock);
+    assert.ok(k > 0.55 && k < 0.63, `K сошёлся к ~0.59 и держится, получено ${k}`);
+    // scrollHeight в этой модели не масштабируется — высота остаётся натуральной
+    // (не критично: лишний отступ под артефактом, а не исчезновение).
+    assert.equal(mock.state.posts.at(-1).__dgH, 450);
 });

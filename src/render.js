@@ -59,18 +59,20 @@ const RESIZE_SNIPPET = '<script>(function(){var K=1,U=1;var Z=document.body&&("z
     + 'var s=document.getElementById("dgzs");'
     + 'if(!s&&(t>1.001)){s=document.createElement("style");s.id="dgzs";document.head.appendChild(s)}'
     + 'if(s)s.textContent=(t>1.001)?"html{overflow:auto!important}":""};'
-    // fit заморожен, пока активен зум: измерять ширину увеличенного контента —
-    // петля «измерил больше → применил больше» (регрессия: мерцание). Высота в
-    // зуме тоже не постим: m() по clientHeight зависит от уже выставленной
-    // высоты фрейма — храповик, высота сползала на 15px за цикл (полоса
-    // прокрутки съедала вьюпорт, родитель ужимал фрейм, и так по кругу).
-    + 'var fit=function(){if(U>1.001)return;var b=document.body;if(!b)return;'
+    // fit заморожен, пока активен пользовательский зум: измерять ширину
+    // увеличенного контента — петля «измерил больше → применил больше». Высота
+    // в зуме тоже не постим: m() по clientHeight зависит от уже выставленной
+    // высоты фрейма — храповик, высота сползала на 15px за цикл.
+    // ЕСТЕСТВЕННУЮ ширину (N) меряем ТОЛЬКО в незумнутом состоянии (K≈1):
+    // поведение scrollWidth под применённым zoom разнится по движкам и типам
+    // контента (у canvas-артефактов оставалась натуральной → деление на K
+    // дважды учитывало масштаб → K экспоненциально схлопывался до нуля,
+    // артефакт «мигал и исчезал»). Недостаток: если контент стал шире, пока
+    // фрейм сжат, перефит случится только после возврата к K≈1.
+    + 'var N=0;var fit=function(){if(U>1.001)return;var b=document.body;if(!b)return;'
     + 'var w=document.documentElement.clientWidth||window.innerWidth;if(!w)return;'
-    // Естественная ширина только из scrollWidth — единственной метрики, на которую
-    // не влияет применённый масштаб (zoom меняет scrollWidth — делим на K;
-    // transform не меняет). rect.width тут нельзя: он уже содержит масштаб.
-    + 'var nw=Z?(b.scrollWidth/(K||1)):b.scrollWidth;'
-    + 'var k=(nw>w+1)?w/nw:1;if(Math.abs(k-K)>=0.005){K=k;ap()}};'
+    + 'if(K>0.99){N=b.scrollWidth||N}if(!N)return;'
+    + 'var k=(N>w+1)?w/N:1;if(Math.abs(k-K)>=0.005){K=k;ap()}};'
     + 'var m=function(){var b=document.body;if(!b)return document.documentElement.scrollHeight;'
     + 'return Z?Math.max(b.getBoundingClientRect().height,b.scrollHeight)'
     + ':Math.max(b.getBoundingClientRect().height,b.scrollHeight*K)};'
@@ -315,6 +317,13 @@ function buildActionRow({ collapse = false } = {}) {
 
 // Артефакты рендерим через blob: URL — не собираемый srcdoc и не зависит
 // от frame-src хоста (в опорном ST CSP отключён: helmet contentSecurityPolicy: false).
+// Всегда с <!DOCTYPE html>: без него документ уходит в quirks-режим, где
+// body{height:100%} = высоте вьюпорта фрейма — высота подпитывает сама себя
+// через рукопожатие и раздувает iframe до капа 4000 (артефакт «исчезает»).
+// Дубль doctype парсер игнорирует безболезненно, первый wins.
+function frameDoc(html) {
+    return '<!DOCTYPE html>' + html;
+}
 // Старый blob отзываем ТОЛЬКО после загрузки нового документа: синхронный revoke
 // до load на медленных движках (мобильная Opera) через раз убивал фрейм в полёте —
 // «пустой лайтбокс/фрейм». Страховка: если за 2.5с не пришло рукопожатие высоты
@@ -353,7 +362,7 @@ function buildShell(artifact, key, msgId) {
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.setAttribute('title', String(artifact.type || 'artifact'));
     const html = patchStoredArtifact(artifact.html);
-    const frameHtml = () => withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET + CMD_SNIPPET;
+    const frameHtml = () => frameDoc(withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET + CMD_SNIPPET);
     mountFrameHtml(frame, frameHtml());
     shell.appendChild(frame);
     // Догреть кэш фото и перелить в iframe, когда data: готовы. Без картинок
@@ -461,7 +470,7 @@ function openPopup(artifact, msgId = null) {
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
     const html = withImmersiveCss(patchStoredArtifact(String(artifact.html)));
-    const frameHtml = () => withCachedImages(html) + RESIZE_SNIPPET + CMD_SNIPPET;
+    const frameHtml = () => frameDoc(withCachedImages(html) + RESIZE_SNIPPET + CMD_SNIPPET);
     mountFrameHtml(frame, frameHtml());
     if (/src="(\/user\/images\/[^"]+)"/.test(html)) {
         warmImages(html).then(() => {

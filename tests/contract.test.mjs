@@ -11,11 +11,13 @@ test('контракт содержит ключевые правила форм
     assert.match(DIEGETIC_CONTRACT, /<body/);
 });
 
-test('контракт приказывает делать артефакт, а не решать, делать ли', () => {
-  // Требование: универсальный шаблон = команда. Никаких лазеек «импульса нет».
-  assert.ok(!/pulse/i.test(DIEGETIC_CONTRACT), 'в контракте не должно быть слова pulse вовсе');
-  assert.match(DIEGETIC_CONTRACT, /MANDATORY/iu);
-  assert.match(DIEGETIC_CONTRACT, /Refusal is not allowed/iu);
+test('контракт описывает только технический протокол', () => {
+  assert.match(DIEGETIC_CONTRACT, /Return exactly \{\{MAX_COUNT\}\} artifact/iu);
+  assert.match(DIEGETIC_CONTRACT, /exactly the keys "type" and "anchor"/iu);
+  assert.match(DIEGETIC_CONTRACT, /one ```html fenced block per artifact/iu);
+  assert.match(DIEGETIC_CONTRACT, /verbatim 2–6-word phrase/iu);
+  assert.match(DIEGETIC_CONTRACT, /use "" if no suitable anchor/iu);
+  assert.doesNotMatch(DIEGETIC_CONTRACT, /MANDATORY|Refusal is not allowed|retelling|physical object/iu);
 });
 
 test('промпты на английском: контракт и склейка без кириллицы', () => {
@@ -62,10 +64,10 @@ test('assemblePrompt: контракт не дублируется (регрес
     assert.equal(withPlaceholder.split('### TOOL — DIEGETIC HTML').length - 1, 1);
 });
 
-test('контракт: библиотеки не запрещены целиком — только неоправданные', () => {
-    // Замечание тестеров: «без гигантских библиотек» ограничивало модель.
-    assert.ok(!/гигантских библиотек|giant libraries/i.test(DIEGETIC_CONTRACT));
-    assert.match(DIEGETIC_CONTRACT, /external libraries only when the medium truly requires/iu);
+test('контракт сохраняет сигнатуру и защищает границы парсера', () => {
+    assert.match(DIEGETIC_CONTRACT, /^### TOOL — DIEGETIC HTML \(response contract\)/u);
+    assert.match(DIEGETIC_CONTRACT, /Do not place .*inside the artifact HTML/iu);
+    assert.match(DIEGETIC_CONTRACT, /Return the artifact pair\(s\) only/iu);
 });
 
 test('assemblePromptParts: system = шаблон+контракт, user = пост; контекст перед постом', () => {
@@ -128,6 +130,7 @@ test('assemblePromptParts: пост обёрнут в <post>, хвост — н�
     assert.match(user, /<post>\nТекст поста\.\n<\/post>/);
     assert.match(user, /Respond ONLY with the artifact pair/);
     assert.match(user, /Do not retell, clean up or reformat/);
+    assert.match(user, /Prefer a context-specific living object or environment with causal, tactile interaction/);
 });
 
 test('assemblePromptParts: напоминание на английском (кириллицы нет в служебных строках)', () => {
@@ -136,14 +139,10 @@ test('assemblePromptParts: напоминание на английском (к�
     assert.ok(!/\p{Script=Cyrillic}/u.test(tail), 'служебное напоминание — только английский');
 });
 
-test('контракт учит схеме мета и закрытию фенса (few-shot пример)', () => {
-    assert.match(DIEGETIC_CONTRACT, /EXACTLY the keys "type" and "anchor"/);
-    assert.match(DIEGETIC_CONTRACT, /ALWAYS close the ```html fence/);
-    assert.match(DIEGETIC_CONTRACT, /NEVER a retelling or a reformatting/);
-    // Пример пары: мета с type/anchor и ЗАКРЫТЫЙ фенс (пар примера нечётным не бывает)
-    const example = DIEGETIC_CONTRACT.slice(DIEGETIC_CONTRACT.indexOf('Example of one pair'));
-    assert.match(example, /<!--DIEGETIC \{"type":"ticket","anchor":"[^"]+"\}-->/);
-    assert.equal(example.split('```').length % 2, 1, 'фенсы примера закрыты');
+test('контракт показывает ровно одну пару и закрытый fence', () => {
+    const example = DIEGETIC_CONTRACT.slice(DIEGETIC_CONTRACT.indexOf('For each artifact'));
+    assert.match(example, /<!--DIEGETIC \{"type":"<type>","anchor":"<anchor>"\}-->/);
+    assert.match(example, /```html\n<html>\.\.\.<body>\.\.\.<\/body>\.\.\.<\/html>\n```/);
 });
 
 test('assemblePromptParts: задача — первой строкой user-сообщения', () => {

@@ -11,9 +11,9 @@ import {
 
 const base = () => ({ templates: { 'Мой': 'текст-1', 'Аскет': 'текст-2' }, activeTemplate: 'Мой' });
 
-test('встроенные имена: universal и universal-photo под замком, дефолт — universal', () => {
-    assert.deepEqual(Object.keys(BUILTIN_TEMPLATES).sort(), ['universal', 'universal-photo']);
-    assert.ok(isBuiltinTemplate('universal') && isBuiltinTemplate('universal-photo'));
+test('встроенные имена под замком, дефолт — universal', () => {
+    assert.deepEqual(Object.keys(BUILTIN_TEMPLATES).sort(), ['TestDie', 'universal', 'universal-photo']);
+    assert.ok(isBuiltinTemplate('universal') && isBuiltinTemplate('universal-photo') && isBuiltinTemplate('TestDie'));
     assert.ok(!isBuiltinTemplate('Мой'));
     assert.equal(DEFAULT_TEMPLATE, 'universal');
 });
@@ -55,6 +55,7 @@ test('deleteTemplate: свой удаляется, встроенный нель
     assert.deepEqual(next.templates, { 'Аскет': 'текст-2' });
     assert.equal(next.activeTemplate, 'universal');
     assert.equal(deleteTemplate(base(), 'universal-photo'), null);
+    assert.equal(deleteTemplate(base(), 'TestDie'), null);
     const keep = deleteTemplate(base(), 'Аскет');
     assert.equal(keep.activeTemplate, 'Мой', 'удаление неактивного выбор не трогает');
 });

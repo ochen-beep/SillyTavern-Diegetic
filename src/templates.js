@@ -7,6 +7,7 @@
 export const BUILTIN_TEMPLATES = Object.freeze({
     universal: 'Универсальный',
     'universal-photo': 'Универсальный · фото',
+    TestDie: 'Тест',
 });
 
 export const DEFAULT_TEMPLATE = 'universal';

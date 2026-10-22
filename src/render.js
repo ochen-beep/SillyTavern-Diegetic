@@ -50,12 +50,19 @@ const RESIZE_SNIPPET = '<script>(function(){var K=1,U=1;var Z=document.body&&("z
     + 'var ap=function(){var b=document.body;if(!b)return;var t=K*U;'
     + 'if(Z){b.style.zoom=(t<0.999||t>1.001)?String(t):""}'
     + 'else{b.style.transformOrigin="top center";b.style.transform=(t<0.999||t>1.001)?"scale("+t+")":""}'
-    // В зуме разрешаем внутренний скролл (pan нативный, GPU/композиторный, без JS),
-    // иначе html{overflow:hidden} из IMMERSIVE_CSS молча обрежет увеличенное.
-    + 'document.documentElement.style.overflow=(U>1.001)?"auto":""};'
+    // В зуме html должен скроллиться (pan нативный, без JS). overflow:hidden из
+    // IMMERSIVE_CSS стоит с !important — inline его не перебьёт, нужен свой <style>.
+    + 'var s=document.getElementById("dgzs");'
+    + 'if(!s&&(t>1.001)){s=document.createElement("style");s.id="dgzs";document.head.appendChild(s)}'
+    + 'if(s)s.textContent=(t>1.001)?"html{overflow:auto!important}":""};'
     + 'var fit=function(){var b=document.body;if(!b)return;'
     + 'var w=document.documentElement.clientWidth||window.innerWidth;if(!w)return;'
-    + 'var nw=Z?(b.scrollWidth/(K||1)):Math.max(b.scrollWidth,b.getBoundingClientRect().width/(K||1));'
+    // Естественная ширина только из scrollWidth — единственной метрики, на которую
+    // не влияет применённый масштаб (zoom меняет scrollWidth — делим на K*U;
+    // transform не меняет). rect.width тут нельзя: он уже содержит K*U, и
+    // «измерил → применил → измерил больше» разгоняет K в бесконечность
+    // (мигание и пустой блок на мобилках, см. регрессию).
+    + 'var nw=Z?(b.scrollWidth/(K*(U||1))):b.scrollWidth;'
     + 'var k=(nw>w+1)?w/nw:1;if(Math.abs(k-K)>=0.005){K=k;ap()}};'
     + 'var m=function(){var b=document.body;if(!b)return document.documentElement.scrollHeight;'
     // В зуме фрейм не растим: высота = вьюпорт, pan внутри. Иначе zoom×2 раздул бы
@@ -64,10 +71,12 @@ const RESIZE_SNIPPET = '<script>(function(){var K=1,U=1;var Z=document.body&&("z
     + 'return Z?Math.max(b.getBoundingClientRect().height,b.scrollHeight)'
     + ':Math.max(b.getBoundingClientRect().height,b.scrollHeight*K)};'
     + 'var p=function(){fit();try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
-    // Double-tap / dblclick — зум fit↔2× (PhotoSwipe-подобные дискретные уровни).
-    // Только слушатель touchend (passive) — никакого трекинга указателей и rAF.
-    + 'var lt=0;var tz=function(){U=(U>1.001)?1:2;ap();p()};'
-    + 'addEventListener("touchend",function(){var n=Date.now();if(n-lt<300)tz();lt=n},{passive:true});'
+    // Зум fit↔2× — дискретные уровни, как в PhotoSwipe. Триггер — двухпальцевый
+    // тап (мобилки: не конфликтует с одиночными тапами по интерактиву артефакта,
+    // двойной тап по игровой кнопке — обычное действие) или dblclick (десктоп).
+    + 'var two=false;var tz=function(){U=(U>1.001)?1:2;ap();p()};'
+    + 'addEventListener("touchstart",function(e){if(e.touches.length>=2)two=true},{passive:true});'
+    + 'addEventListener("touchend",function(e){if(two&&e.touches.length===0){two=false;tz()}},{passive:true});'
     + 'addEventListener("dblclick",tz);'
     + 'var fix=function(){document.querySelectorAll("[style*=vh]").forEach(function(el){var s=el.getAttribute("style");var t=String(s).replace(/(min-height|max-height|height)\\s*:\\s*100(?:s|l|d)?vh/gi,"$1:auto");if(t!==s)el.setAttribute("style",t)})};'
     + 'if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}'
@@ -334,10 +343,13 @@ function buildShell(artifact, key, msgId) {
     const frameHtml = () => withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET + CMD_SNIPPET;
     mountFrameHtml(frame, frameHtml());
     shell.appendChild(frame);
-    // Догреть кэш фото и перелить в iframe, когда data: готовы.
-    warmImages(html).then(() => {
-        if (frame.isConnected) mountFrameHtml(frame, frameHtml());
-    });
+    // Догреть кэш фото и перелить в iframe, когда data: готовы. Без картинок
+    // перемонтаж не нужен: повторный mount = revoke+новый blob = мигание.
+    if (/src="(\/user\/images\/[^"]+)"/.test(html)) {
+        warmImages(html).then(() => {
+            if (frame.isConnected) mountFrameHtml(frame, frameHtml());
+        });
+    }
     // Меню живёт вместе с показанным артефактом в любом режиме — скопировать /
     // сохранить / удалить; «Свернуть» добавляется только в expand-режиме.
     const mode = _deps?.settings?.().displayMode ?? 'inline';
@@ -438,9 +450,11 @@ function openPopup(artifact, msgId = null) {
     const html = withImmersiveCss(patchStoredArtifact(String(artifact.html)));
     const frameHtml = () => withCachedImages(html) + RESIZE_SNIPPET + CMD_SNIPPET;
     mountFrameHtml(frame, frameHtml());
-    warmImages(html).then(() => {
-        if (overlay.isConnected) mountFrameHtml(frame, frameHtml());
-    });
+    if (/src="(\/user\/images\/[^"]+)"/.test(html)) {
+        warmImages(html).then(() => {
+            if (overlay.isConnected) mountFrameHtml(frame, frameHtml());
+        });
+    }
     overlay.querySelector('.dg-popup-dialog').appendChild(frame);
     overlay.addEventListener('click', (e) => { if (e.target.closest('[data-dg-close]')) closePopup(); });
     document.body.appendChild(overlay);

@@ -33,6 +33,7 @@ function mockFrame({ clientWidth, contentW, contentH }) {
         set transform(v) { state.transform = v; },
         get transform() { return state.transform; },
         transformOrigin: '',
+        width: '',
     };
     const bodyEl = {
         style: bodyStyle,
@@ -58,7 +59,7 @@ function mockFrame({ clientWidth, contentW, contentH }) {
         parent: { postMessage: (d) => state.posts.push(d) },
         addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn); },
     };
-    return { win, listeners, state };
+    return { win, listeners, state, frameBodyStyle: () => bodyStyle };
 }
 
 function runSnippet(mock) {
@@ -74,7 +75,7 @@ const applied = (mock) => {
     return mock.state.zoom;
 };
 
-test('fit сходится на узком фрейме и не осциллирует после зума ×2', () => {
+test('fit сходится на узком фрейме; зум не петалит, не шлёт высоту, даёт pan', () => {
     const mock = mockFrame({ clientWidth: 380, contentW: 680, contentH: 440 });
     runSnippet(mock);
     fire(mock, 'load'); fire(mock, 'resize'); fire(mock, 'resize'); fire(mock, 'resize');
@@ -83,21 +84,30 @@ test('fit сходится на узком фрейме и не осциллир
     assert.ok(fitK > 0.5 && fitK < 0.62, `масштаб сошёлся к ~0.56, получено ${fitK}`);
     assert.equal(mock.state.posts.at(-1).__dgH, Math.round(440 * fitK));
 
-    // Двухпальцевый тап → U=2; итерации ResizeObserver-цикла не должны разгонять K.
+    // Двухпальцевый тап → U=2; итерации цикла не должны двигать K вообще.
+    const postsBefore = mock.state.posts.length;
     fire(mock, 'touchstart', { touches: [{}, {}] });
     fire(mock, 'touchend', { touches: [] });
     fire(mock, 'touchstart', { touches: [{}] });
     fire(mock, 'touchend', { touches: [] }); // одиночный тап — не триггер
     for (let i = 0; i < 5; i++) fire(mock, 'resize');
     const zoomed = applied(mock);
-    assert.ok(zoomed > 1.05 && zoomed < 1.2, `в зуме ~K×2≈1.11, получено ${zoomed}`);
-    assert.equal(mock.state.posts.at(-1).__dgH, 300); // в зуме высота = вьюпорт фрейма
+    assert.ok(Math.abs(zoomed - fitK * 2) < 0.02, `в зуме K×2≈${(fitK * 2).toFixed(3)}, получено ${zoomed}`);
+    assert.equal(mock.state.posts.length, postsBefore, 'в зуме высота родителю не постится (нет храповика)');
+    assert.equal(mock.frameBodyStyle().width, 'max-content', 'в зуме body по контенту — есть горизонтальный pan');
 
-    // Обратно
+    // Следующий уровень: ×3
     fire(mock, 'touchstart', { touches: [{}, {}] });
     fire(mock, 'touchend', { touches: [] });
-    for (let i = 0; i < 5; i++) fire(mock, 'resize');
+    assert.ok(Math.abs(applied(mock) - fitK * 3) < 0.03, `уровень ×3, получено ${applied(mock)}`);
+
+    // Обратно к фиту: посты возобновляются с фит-высотой, pan-стили сняты
+    fire(mock, 'touchstart', { touches: [{}, {}] });
+    fire(mock, 'touchend', { touches: [] });
+    for (let i = 0; i < 3; i++) fire(mock, 'resize');
     assert.ok(Math.abs(applied(mock) - fitK) < 0.01, `возврат к фиту, получено ${applied(mock)}`);
+    assert.equal(mock.frameBodyStyle().width, '');
+    assert.equal(mock.state.posts.at(-1).__dgH, Math.round(440 * fitK));
 });
 
 test('широкий фрейм — масштаб не применяется, ветка не петалит', () => {

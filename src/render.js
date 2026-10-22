@@ -50,31 +50,35 @@ const RESIZE_SNIPPET = '<script>(function(){var K=1,U=1;var Z=document.body&&("z
     + 'var ap=function(){var b=document.body;if(!b)return;var t=K*U;'
     + 'if(Z){b.style.zoom=(t<0.999||t>1.001)?String(t):""}'
     + 'else{b.style.transformOrigin="top center";b.style.transform=(t<0.999||t>1.001)?"scale("+t+")":""}'
+    // Зум: ширина body по контенту — иначе увеличенное шире вьюпорта не даёт
+    // горизонтального скролла: при zoom в Chromium/Opera переполненные дети
+    // не расширяют scrollable overflow (pan шёл только по вертикали).
+    + 'b.style.width=(U>1.001)?"max-content":"";'
     // В зуме html должен скроллиться (pan нативный, без JS). overflow:hidden из
     // IMMERSIVE_CSS стоит с !important — inline его не перебьёт, нужен свой <style>.
     + 'var s=document.getElementById("dgzs");'
     + 'if(!s&&(t>1.001)){s=document.createElement("style");s.id="dgzs";document.head.appendChild(s)}'
     + 'if(s)s.textContent=(t>1.001)?"html{overflow:auto!important}":""};'
-    + 'var fit=function(){var b=document.body;if(!b)return;'
+    // fit заморожен, пока активен зум: измерять ширину увеличенного контента —
+    // петля «измерил больше → применил больше» (регрессия: мерцание). Высота в
+    // зуме тоже не постим: m() по clientHeight зависит от уже выставленной
+    // высоты фрейма — храповик, высота сползала на 15px за цикл (полоса
+    // прокрутки съедала вьюпорт, родитель ужимал фрейм, и так по кругу).
+    + 'var fit=function(){if(U>1.001)return;var b=document.body;if(!b)return;'
     + 'var w=document.documentElement.clientWidth||window.innerWidth;if(!w)return;'
     // Естественная ширина только из scrollWidth — единственной метрики, на которую
-    // не влияет применённый масштаб (zoom меняет scrollWidth — делим на K*U;
-    // transform не меняет). rect.width тут нельзя: он уже содержит K*U, и
-    // «измерил → применил → измерил больше» разгоняет K в бесконечность
-    // (мигание и пустой блок на мобилках, см. регрессию).
-    + 'var nw=Z?(b.scrollWidth/(K*(U||1))):b.scrollWidth;'
+    // не влияет применённый масштаб (zoom меняет scrollWidth — делим на K;
+    // transform не меняет). rect.width тут нельзя: он уже содержит масштаб.
+    + 'var nw=Z?(b.scrollWidth/(K||1)):b.scrollWidth;'
     + 'var k=(nw>w+1)?w/nw:1;if(Math.abs(k-K)>=0.005){K=k;ap()}};'
     + 'var m=function(){var b=document.body;if(!b)return document.documentElement.scrollHeight;'
-    // В зуме фрейм не растим: высота = вьюпорт, pan внутри. Иначе zoom×2 раздул бы
-    // iframe на весь чат.
-    + 'if(U>1.001)return document.documentElement.clientHeight;'
     + 'return Z?Math.max(b.getBoundingClientRect().height,b.scrollHeight)'
     + ':Math.max(b.getBoundingClientRect().height,b.scrollHeight*K)};'
-    + 'var p=function(){fit();try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
-    // Зум fit↔2× — дискретные уровни, как в PhotoSwipe. Триггер — двухпальцевый
+    + 'var p=function(){fit();if(U>1.001)return;try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
+    // Зум fit↔2×↔3× — дискретные уровни, как в PhotoSwipe. Триггер — двухпальцевый
     // тап (мобилки: не конфликтует с одиночными тапами по интерактиву артефакта,
     // двойной тап по игровой кнопке — обычное действие) или dblclick (десктоп).
-    + 'var two=false;var tz=function(){U=(U>1.001)?1:2;ap();p()};'
+    + 'var two=false;var tz=function(){U=(U<1.5)?2:(U<2.5?3:1);ap();p()};'
     + 'addEventListener("touchstart",function(e){if(e.touches.length>=2)two=true},{passive:true});'
     + 'addEventListener("touchend",function(e){if(two&&e.touches.length===0){two=false;tz()}},{passive:true});'
     + 'addEventListener("dblclick",tz);'
@@ -311,11 +315,20 @@ function buildActionRow({ collapse = false } = {}) {
 
 // Артефакты рендерим через blob: URL — не собираемый srcdoc и не зависит
 // от frame-src хоста (в опорном ST CSP отключён: helmet contentSecurityPolicy: false).
+// Старый blob отзываем ТОЛЬКО после загрузки нового документа: синхронный revoke
+// до load на медленных движках (мобильная Opera) через раз убивал фрейм в полёте —
+// «пустой лайтбокс/фрейм». Страховка: если за 2.5с не пришло рукопожатие высоты
+// (загрузка умерла молча), перезагружаем тот же blob — он гарантированно жив.
 function mountFrameHtml(frame, html) {
-    if (frame.dataset.dgBlob) URL.revokeObjectURL(frame.dataset.dgBlob);
+    const prev = frame.dataset.dgBlob;
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
     frame.dataset.dgBlob = url;
+    frame.dataset.dgHSeen = '';
     frame.src = url;
+    if (prev) frame.addEventListener('load', () => URL.revokeObjectURL(prev), { once: true });
+    setTimeout(() => {
+        if (!frame.dataset.dgHSeen && frame.isConnected) frame.src = frame.dataset.dgBlob;
+    }, 2500);
 }
 
 function buildShell(artifact, key, msgId) {
@@ -791,12 +804,13 @@ export function initRender(deps = {}) {
                 // Лайтбокс: высота диалога по контенту артефакта (+ шапка),
                 // иначе фиксированная высота обрезает артефакт в ландшафте.
                 if (_popup?.frame?.contentWindow === e.source) {
+                    _popup.frame.dataset.dgHSeen = '1';
                     const dlg = _popup.el.querySelector('.dg-popup-dialog');
                     if (dlg) dlg.style.height = `${Math.min(clampH(h) + 40, Math.round(window.innerHeight * 0.86))}px`;
                     return;
                 }
                 for (const f of document.querySelectorAll(`iframe.${FRAME_CLASS}`)) {
-                    if (f.contentWindow === e.source) { f.style.height = `${clampH(h)}px`; break; }
+                    if (f.contentWindow === e.source) { f.dataset.dgHSeen = '1'; f.style.height = `${clampH(h)}px`; break; }
                 }
                 return;
             }

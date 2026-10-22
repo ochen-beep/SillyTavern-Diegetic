@@ -40,12 +40,39 @@ const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;m
 // замкнутый круг «высота фрейма = вьюпорт ≥ scrollHeight». Плюс MutationObserver
 // срезает рантайм-правки min-height:100vh (та же ловушка, что чинит
 // normalizeIntrinsicHeight, но уже после монтажа).
-const RESIZE_SNIPPET = '<script>(function(){var m=function(){var b=document.body;return b?Math.max(b.getBoundingClientRect().height,b.scrollHeight):document.documentElement.scrollHeight};'
-    + 'var p=function(){try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
+// Модель любит сцены с жёсткой px-шириной (680px и т.п.), а iframe в посте —
+// 100% колонки сообщения: на телефоне контент молча обрезался по бокам
+// (overflow:hidden из IMMERSIVE_CSS, рукопожатие меряет только высоту).
+// Авто-фит: контент шире вьюпорта фрейма → сжимаем body через zoom (меняет
+// layout, scrollHeight масштабируется сам); где zoom нет — transform:scale,
+// и m() домножает scrollHeight на K (rect.height уже включает трансформ).
+const RESIZE_SNIPPET = '<script>(function(){var K=1,U=1;var Z=document.body&&("zoom" in document.body.style);'
+    + 'var ap=function(){var b=document.body;if(!b)return;var t=K*U;'
+    + 'if(Z){b.style.zoom=(t<0.999||t>1.001)?String(t):""}'
+    + 'else{b.style.transformOrigin="top center";b.style.transform=(t<0.999||t>1.001)?"scale("+t+")":""}'
+    // В зуме разрешаем внутренний скролл (pan нативный, GPU/композиторный, без JS),
+    // иначе html{overflow:hidden} из IMMERSIVE_CSS молча обрежет увеличенное.
+    + 'document.documentElement.style.overflow=(U>1.001)?"auto":""};'
+    + 'var fit=function(){var b=document.body;if(!b)return;'
+    + 'var w=document.documentElement.clientWidth||window.innerWidth;if(!w)return;'
+    + 'var nw=Z?(b.scrollWidth/(K||1)):Math.max(b.scrollWidth,b.getBoundingClientRect().width/(K||1));'
+    + 'var k=(nw>w+1)?w/nw:1;if(Math.abs(k-K)>=0.005){K=k;ap()}};'
+    + 'var m=function(){var b=document.body;if(!b)return document.documentElement.scrollHeight;'
+    // В зуме фрейм не растим: высота = вьюпорт, pan внутри. Иначе zoom×2 раздул бы
+    // iframe на весь чат.
+    + 'if(U>1.001)return document.documentElement.clientHeight;'
+    + 'return Z?Math.max(b.getBoundingClientRect().height,b.scrollHeight)'
+    + ':Math.max(b.getBoundingClientRect().height,b.scrollHeight*K)};'
+    + 'var p=function(){fit();try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
+    // Double-tap / dblclick — зум fit↔2× (PhotoSwipe-подобные дискретные уровни).
+    // Только слушатель touchend (passive) — никакого трекинга указателей и rAF.
+    + 'var lt=0;var tz=function(){U=(U>1.001)?1:2;ap();p()};'
+    + 'addEventListener("touchend",function(){var n=Date.now();if(n-lt<300)tz();lt=n},{passive:true});'
+    + 'addEventListener("dblclick",tz);'
     + 'var fix=function(){document.querySelectorAll("[style*=vh]").forEach(function(el){var s=el.getAttribute("style");var t=String(s).replace(/(min-height|max-height|height)\\s*:\\s*100(?:s|l|d)?vh/gi,"$1:auto");if(t!==s)el.setAttribute("style",t)})};'
     + 'if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}'
     + 'if(typeof MutationObserver!=="undefined"){new MutationObserver(function(){fix();p()}).observe(document.documentElement,{attributes:true,attributeFilter:["style"],subtree:true})}'
-    + 'addEventListener("load",p);fix();p()})()</' + 'script>';
+    + 'addEventListener("load",p);addEventListener("resize",p);fix();p()})()</' + 'script>';
 // Клики внутри sandbox-iframe (opaque origin) до родительского document не доходят —
 // команды контролов (✎/⟳) уходят postMessage'ом, по образцу рукопожатия высоты.
 // Capture + stopPropagation: клик по контролу не должен будить JS самого артефакта.
@@ -244,6 +271,13 @@ function buildActionRow({ collapse = false } = {}) {
         fold.textContent = '▾ Свернуть';
         row.appendChild(fold);
     }
+    const pop = document.createElement('button');
+    pop.type = 'button';
+    pop.className = 'dg-chip-action';
+    pop.setAttribute('data-dg-pop', '');
+    pop.title = 'Открыть поверх чата';
+    pop.textContent = '⤢';
+    row.appendChild(pop);
     const copy = document.createElement('button');
     copy.type = 'button';
     copy.className = 'dg-chip-action';
@@ -377,6 +411,7 @@ export function deleteArtifact(msgId, artifactId) {
 function closePopup() {
     _popup?.el.remove();
     _popup = null;
+    document.documentElement?.classList.remove('dg-lock');
 }
 
 /** Панельная библиотека (ui.js): открыть артефакт в лайтбоксе по msgId + id. */
@@ -401,7 +436,7 @@ function openPopup(artifact, msgId = null) {
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
     const html = withImmersiveCss(patchStoredArtifact(String(artifact.html)));
-    const frameHtml = () => withCachedImages(html) + CMD_SNIPPET;
+    const frameHtml = () => withCachedImages(html) + RESIZE_SNIPPET + CMD_SNIPPET;
     mountFrameHtml(frame, frameHtml());
     warmImages(html).then(() => {
         if (overlay.isConnected) mountFrameHtml(frame, frameHtml());
@@ -409,6 +444,8 @@ function openPopup(artifact, msgId = null) {
     overlay.querySelector('.dg-popup-dialog').appendChild(frame);
     overlay.addEventListener('click', (e) => { if (e.target.closest('[data-dg-close]')) closePopup(); });
     document.body.appendChild(overlay);
+    // Скролл-лок фона: чат под оверлеем не крутится колесом/тачем (YARL-паттерн).
+    document.documentElement.classList.add('dg-lock');
     // Команды из iframe попапа (✎/⟳) маппятся на артефакт через это описание —
     // у popup-iframe нет shell-предка в посте.
     _popup = { el: overlay, frame, msgId, artifactId: artifact.id ?? null };
@@ -688,6 +725,11 @@ function onDocumentClick(e) {
             deleteArtifact(msgId, String(key).split('|')[0]);
             return;
         }
+        if (e.target.closest('[data-dg-pop]')) {
+            const a = artifactByKey(msgId, key);
+            if (a) openPopup(a, msgId);
+            return;
+        }
         if (e.target.closest('[data-dg-copy]')) {
             const a = artifactByKey(msgId, key);
             if (a) copyText(a.html).then((ok) => globalThis.toastr?.[ok ? 'success' : 'error'](ok ? 'Diegetic: HTML скопирован' : 'Diegetic: копирование не удалось'));
@@ -732,6 +774,13 @@ export function initRender(deps = {}) {
         _onMessage = (e) => {
             const h = e?.data?.__dgH;
             if (typeof h === 'number') {
+                // Лайтбокс: высота диалога по контенту артефакта (+ шапка),
+                // иначе фиксированная высота обрезает артефакт в ландшафте.
+                if (_popup?.frame?.contentWindow === e.source) {
+                    const dlg = _popup.el.querySelector('.dg-popup-dialog');
+                    if (dlg) dlg.style.height = `${Math.min(clampH(h) + 40, Math.round(window.innerHeight * 0.86))}px`;
+                    return;
+                }
                 for (const f of document.querySelectorAll(`iframe.${FRAME_CLASS}`)) {
                     if (f.contentWindow === e.source) { f.style.height = `${clampH(h)}px`; break; }
                 }

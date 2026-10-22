@@ -65,6 +65,8 @@ Do not make an interface about the chat, extension, prompt, model, test environm
 <FORM AND SCALE>
 Choose the natural proportions and density of the thing. Keep the document content-driven, responsive to its embedding, and free of horizontal overflow. Do not use min-height or height: 100vh, 100svh, or 100dvh on body or the main scene. A phone, paper sheet, board, instrument body, or monitor may have stable inner dimensions and internal scrolling when physically appropriate.
 
+The embed may be as narrow as 340px (mobile chat column). Prefer fluid layouts (max-width, %, flex-wrap) over fixed pixel widths. If a fixed-width composition is unavoidable, scale it to the viewport from inside (for example a wrapper with transform: scale(min(1, 100vw / W)) and transform-origin: top center) so nothing is clipped on narrow embeds.
+
 Keep body transparent so the artifact sits in the conversation, unless the surrounding space is itself the chosen environment. Do not use a generic gradient backdrop to frame an object.
 </FORM AND SCALE>
 

@@ -135,7 +135,12 @@ const CSS = `
 /* z-index выше #top-settings-holder (3005/4005): из «Библиотеки» в настройках
    попап иначе открывается ЗА панелью настроек. */
 .dg-popup { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center;
-  justify-content: center; width: 100vw; height: 100vh; width: 100lvw; height: 100lvh; }
+  justify-content: center; width: 100vw; height: 100vh; width: 100lvw; height: 100lvh;
+  width: 100dvw; height: 100dvh; }
+/* d-единицы последними: следуют за скрытием URL-бара мобильного браузера,
+   lvh застыл бы на «большом» вьюпорте. Старые движки берут lvh/vh выше. */
+/* Скролл-лок чата под открытым лайтбоксом (класс вешает render.js openPopup). */
+html.dg-lock, html.dg-lock body { overflow: hidden; overscroll-behavior: none; }
 .dg-popup-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
 /* Колонка: шапка сверху во всю ширину, артефакт ниже. Без column iframe на
    100% ширины сплющивает header в узкую полоску сбоку. */

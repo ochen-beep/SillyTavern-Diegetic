@@ -38,7 +38,12 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 // срабатывал, а внутри сжатого контейнера абсолютно спозиционированные детали
 // обрезались (шпильки уходили за край). С shrink:0 сцена остаётся натуральной
 // ширины и масштабируется целиком.
-const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}body>*{flex-shrink:0!important}</style>';
+// touch-action:none: свайп-механики артефакта не должны зависеть от того,
+// вспомнила ли модель про preventDefault (пруд глушил жест сам, шпильки — нет).
+// Иначе жест цепляется к странице (iframe переполнению скроллить нечего),
+// а артефакту прилетает touchcancel — механика обрывается на полпути.
+// Цена: по площади артефакта чат не листается — скролл на тексте вокруг.
+const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}body>*{flex-shrink:0!important}html,body{touch-action:none}</style>';
 // Рантайм-высота меряется по body, а не по documentElement.scrollHeight:
 // у корневого скроллера scrollHeight не опускается ниже вьюпорта фрейма,
 // поэтому после роста (раскрытие «слоя») iframe никогда не сжимался обратно —

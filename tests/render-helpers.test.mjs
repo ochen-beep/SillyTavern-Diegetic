@@ -42,9 +42,21 @@ test('normalizeIntrinsicHeight: вариации регистра и пробе�
     assert.ok(!/100vh/i.test(out));
 });
 
+test('normalizeIntrinsicHeight: ЛЮБОЙ vh в высоте — петля (H→N%H→…), не только 100', () => {
+    // 94vh/50vh схлопывали артефакт и лайтбокс до минимума («скукожило»).
+    const out = normalizeIntrinsicHeight('<style>a{height:94vh}b{min-height:50vh}</style>');
+    assert.ok(out.includes('height:auto') && out.includes('min-height:auto'));
+});
+
+test('normalizeIntrinsicHeight: с refH vh переводится в стабильные px', () => {
+    const out = normalizeIntrinsicHeight('<style>.s{height:94vh;max-height:100svh}</style>', 700);
+    assert.ok(out.includes('height:658px'), out);
+    assert.ok(out.includes('max-height:700px'), out);
+});
+
 test('normalizeIntrinsicHeight: прочие размеры не страдают', () => {
-    const html = '<style>a{height:50vh}b{min-height:320px}c{max-height:100%}</style>';
-    assert.equal(normalizeIntrinsicHeight(html), html);
+    const html = '<style>b{min-height:320px}c{max-height:100%}d{width:96vw}</style>';
+    assert.equal(normalizeIntrinsicHeight(html, 700), html);
 });
 
 // ── Контролы фотослотов (✎/⟳): display-патч, payload не хранит кнопок ──

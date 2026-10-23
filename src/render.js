@@ -84,7 +84,7 @@ const RESIZE_SNIPPET = '<script>(function(){var K=1,N=0,NH=0,BX=0,BY=0;var Z=doc
     // Лайтбокс шлёт доступный бокс {w,h}: contain — вся сцена влезает без
     // обрезки по краям. Повторная отправка при повороте/ресайзе окна.
     + 'addEventListener("message",function(e){var d=e&&e.data;if(d&&d.__dgContain){BX=d.__dgContain.w||0;BY=d.__dgContain.h||0;p()}});'
-    + 'var fix=function(){document.querySelectorAll("[style*=vh]").forEach(function(el){var s=el.getAttribute("style");var t=String(s).replace(/(min-height|max-height|height)\\s*:\\s*100(?:s|l|d)?vh/gi,"$1:auto");if(t!==s)el.setAttribute("style",t)})};'
+    + 'var fix=function(){document.querySelectorAll("[style*=vh]").forEach(function(el){var s=el.getAttribute("style");var t=String(s).replace(/(min-height|max-height|height)\\s*:\\s*[\\d.]+(?:s|l|d)?vh/gi,"$1:auto");if(t!==s)el.setAttribute("style",t)})};'
     + 'if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}'
     + 'if(typeof MutationObserver!=="undefined"){new MutationObserver(function(){fix();p()}).observe(document.documentElement,{attributes:true,attributeFilter:["style"],subtree:true})}'
     + 'addEventListener("load",p);addEventListener("resize",p);fix();p()})()</' + 'script>';
@@ -107,13 +107,21 @@ const clampH = (h) => Math.min(Math.max(40, Math.round(h) || 0), 4000);
  * Высота артефакта должна быть «естественной» (по контенту): модель любит
  * min-height:100vh/100svh на body или сцене — внутри iframe vh = высота самого
  * iframe, поэтому рукопожатие растит его до капа 4000, а при внутреннем
- * сворачивании артефакта высота не возвращается. Срезаем vh из height-свойств
- * (анимации вида translateY(100vh) не трогаем).
+ * сворачивании артефакта высота не возвращается. То же и с ЛЮБЫМ Nvh, только
+ * наоборот: сцена {height:94vh} = 0.94 от высоты фрейма → рукопожатие
+ * H→0.94H→0.88H… схлопывало артефакт и лайтбокс до минимума («скукожило»,
+ * «не загружается»). Любой vh в height-свойствах — петля, величина не важна.
+ * С refH (вьюпорт хоста, кап 700) vh переводится в стабильные px: сцена
+ * получает экраноподобный размер и не зависит от высоты собственного фрейма.
+ * Анимации вида translateY(100vh) и width:100vw не трогаем: ширина фрейма
+ * от его высоты не зависит — петли нет.
  */
-export function normalizeIntrinsicHeight(html) {
+export function normalizeIntrinsicHeight(html, refH = 0) {
     return String(html ?? '').replace(
-        /\b(min-height|max-height|height)\s*:\s*100(?:s|l|d)?vh\b/gi,
-        (m, prop) => `${prop}:auto`,
+        /\b(min-height|max-height|height)\s*:\s*([\d.]+)(?:s|l|d)?vh\b/gi,
+        (m, prop, num) => refH
+            ? `${prop}:${Math.round(parseFloat(num) / 100 * refH)}px`
+            : `${prop}:auto`,
     );
 }
 
@@ -193,7 +201,10 @@ export function withSlotControls(html) {
  * дорисовка контролов фотослотов.
  */
 function patchStoredArtifact(html) {
-    let out = normalizeIntrinsicHeight(String(html ?? ''));
+    // refH — вьюпорт хоста с капом: vh сцены переводится в px до монтажа,
+    // чтобы её высота не зависела от высоты собственного фрейма.
+    const refH = Math.min(globalThis.window?.innerHeight || 0, 700);
+    let out = normalizeIntrinsicHeight(String(html ?? ''), refH);
     if (/dg-slot-img/.test(out)) {
         out = out.replace(/(dg-slot-img[^>]*z-index:\s*)1\s*;/g, '$110;');
         if (/\.css-placeholder/.test(out) && !out.includes('css-placeholder{display:none')) {

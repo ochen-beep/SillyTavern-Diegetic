@@ -1,7 +1,7 @@
-// Регрессия «мигание → пустой блок» на мобилках: fit() мерил ширину через
-// rect.width, который уже содержит применённый масштаб — петля разгонала K.
-// Харнесс гоняет реальный сниппет на мок-DOM, где scrollWidth честно реагирует
-// на zoom, и требует сходимости K (в т.ч. после зума U=2).
+// Регрессии RESIZE_SNIPPET на мок-DOM:
+// 1) fit по ширине не петалит ни на одной модели движка;
+// 2) «пруд»: scrollWidth не реагирует на zoom — K не схлопывается;
+// 3) contain от лайтбокса: сцена влезает и в ширину, и в высоту бокса.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -76,39 +76,14 @@ const applied = (mock) => {
     return mock.state.zoom;
 };
 
-test('fit сходится на узком фрейме; зум не петалит, не шлёт высоту, даёт pan', () => {
+test('fit сходится на узком фрейме и держится на ресайзах', () => {
     const mock = mockFrame({ clientWidth: 380, contentW: 680, contentH: 440 });
     runSnippet(mock);
-    fire(mock, 'load'); fire(mock, 'resize'); fire(mock, 'resize'); fire(mock, 'resize');
-
-    const fitK = applied(mock);
-    assert.ok(fitK > 0.5 && fitK < 0.62, `масштаб сошёлся к ~0.56, получено ${fitK}`);
-    assert.equal(mock.state.posts.at(-1).__dgH, Math.round(440 * fitK));
-
-    // Двухпальцевый тап → U=2; итерации цикла не должны двигать K вообще.
-    const postsBefore = mock.state.posts.length;
-    fire(mock, 'touchstart', { touches: [{}, {}] });
-    fire(mock, 'touchend', { touches: [] });
-    fire(mock, 'touchstart', { touches: [{}] });
-    fire(mock, 'touchend', { touches: [] }); // одиночный тап — не триггер
+    fire(mock, 'load');
     for (let i = 0; i < 5; i++) fire(mock, 'resize');
-    const zoomed = applied(mock);
-    assert.ok(Math.abs(zoomed - fitK * 2) < 0.02, `в зуме K×2≈${(fitK * 2).toFixed(3)}, получено ${zoomed}`);
-    assert.equal(mock.state.posts.length, postsBefore, 'в зуме высота родителю не постится (нет храповика)');
-    assert.equal(mock.frameBodyStyle().width, 'max-content', 'в зуме body по контенту — есть горизонтальный pan');
-
-    // Следующий уровень: ×3
-    fire(mock, 'touchstart', { touches: [{}, {}] });
-    fire(mock, 'touchend', { touches: [] });
-    assert.ok(Math.abs(applied(mock) - fitK * 3) < 0.03, `уровень ×3, получено ${applied(mock)}`);
-
-    // Обратно к фиту: посты возобновляются с фит-высотой, pan-стили сняты
-    fire(mock, 'touchstart', { touches: [{}, {}] });
-    fire(mock, 'touchend', { touches: [] });
-    for (let i = 0; i < 3; i++) fire(mock, 'resize');
-    assert.ok(Math.abs(applied(mock) - fitK) < 0.01, `возврат к фиту, получено ${applied(mock)}`);
-    assert.equal(mock.frameBodyStyle().width, '');
-    assert.equal(mock.state.posts.at(-1).__dgH, Math.round(440 * fitK));
+    const k = applied(mock);
+    assert.ok(k > 0.5 && k < 0.62, `масштаб сошёлся к ~0.56, получено ${k}`);
+    assert.equal(mock.state.posts.at(-1).__dgH, Math.round(440 * k));
 });
 
 test('широкий фрейм — масштаб не применяется, ветка не петалит', () => {
@@ -129,7 +104,21 @@ test('пруд-регрессия: scrollWidth не реагирует на zoom
     for (let i = 0; i < 12; i++) fire(mock, 'resize'); // гоняем петлю
     const k = applied(mock);
     assert.ok(k > 0.55 && k < 0.63, `K сошёлся к ~0.59 и держится, получено ${k}`);
-    // scrollHeight в этой модели не масштабируется — высота остаётся натуральной
-    // (не критично: лишний отступ под артефактом, а не исчезновение).
-    assert.equal(mock.state.posts.at(-1).__dgH, 450);
+});
+
+test('contain: лайтбоксный бокс ужимает сцену и по ширине, и по высоте', () => {
+    const mock = mockFrame({ clientWidth: 380, contentW: 680, contentH: 440 });
+    runSnippet(mock);
+    fire(mock, 'load');
+    // Лайтбокс: бокс 380×200 — высота жёстче (440 > 200) → k = 200/440 ≈ 0.4545.
+    fire(mock, 'message', { data: { __dgContain: { w: 380, h: 200 } } });
+    for (let i = 0; i < 4; i++) fire(mock, 'resize');
+    const k = applied(mock);
+    assert.ok(Math.abs(k - 200 / 440) < 0.01, `contain по высоте ~0.4545, получено ${k}`);
+    // Отчёт о высоте не выше бокса: вся сцена видима, края не обрезаны.
+    assert.ok(mock.state.posts.at(-1).__dgH <= 200, `высота ${mock.state.posts.at(-1).__dgH} влезает в 200`);
+    // Бокс ушёл (закрыли лайтбокс / новый размер) → возврат к фиту по ширине.
+    fire(mock, 'message', { data: { __dgContain: { w: 380, h: 0 } } });
+    for (let i = 0; i < 3; i++) fire(mock, 'resize');
+    assert.ok(Math.abs(applied(mock) - 380 / 680) < 0.01, `обратно к фиту по ширине, получено ${applied(mock)}`);
 });

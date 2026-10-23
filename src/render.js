@@ -33,7 +33,12 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 // html/body — нулевой min-height: иначе 100vh-ловушка на body раздувает
 // iframe и после сворачивания артефакта внутри себя высота не сжимается
 // обратно — внизу висит чёрная пустота.
-const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}</style>';
+// body>*{flex-shrink:0}: у flex-центрированных сцен фиксированная ширина
+// (680px) сжималась flex-shrink'ом до ширины фрейма — переполнения нет, fit не
+// срабатывал, а внутри сжатого контейнера абсолютно спозиционированные детали
+// обрезались (шпильки уходили за край). С shrink:0 сцена остаётся натуральной
+// ширины и масштабируется целиком.
+const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}body>*{flex-shrink:0!important}</style>';
 // Рантайм-высота меряется по body, а не по documentElement.scrollHeight:
 // у корневого скроллера scrollHeight не опускается ниже вьюпорта фрейма,
 // поэтому после роста (раскрытие «слоя») iframe никогда не сжимался обратно —
@@ -46,44 +51,34 @@ const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;m
 // Авто-фит: контент шире вьюпорта фрейма → сжимаем body через zoom (меняет
 // layout, scrollHeight масштабируется сам); где zoom нет — transform:scale,
 // и m() домножает scrollHeight на K (rect.height уже включает трансформ).
-const RESIZE_SNIPPET = '<script>(function(){var K=1,U=1;var Z=document.body&&("zoom" in document.body.style);'
-    + 'var ap=function(){var b=document.body;if(!b)return;var t=K*U;'
-    + 'if(Z){b.style.zoom=(t<0.999||t>1.001)?String(t):""}'
-    + 'else{b.style.transformOrigin="top center";b.style.transform=(t<0.999||t>1.001)?"scale("+t+")":""}'
-    // Зум: ширина body по контенту — иначе увеличенное шире вьюпорта не даёт
-    // горизонтального скролла: при zoom в Chromium/Opera переполненные дети
-    // не расширяют scrollable overflow (pan шёл только по вертикали).
-    + 'b.style.width=(U>1.001)?"max-content":"";'
-    // В зуме html должен скроллиться (pan нативный, без JS). overflow:hidden из
-    // IMMERSIVE_CSS стоит с !important — inline его не перебьёт, нужен свой <style>.
-    + 'var s=document.getElementById("dgzs");'
-    + 'if(!s&&(t>1.001)){s=document.createElement("style");s.id="dgzs";document.head.appendChild(s)}'
-    + 'if(s)s.textContent=(t>1.001)?"html{overflow:auto!important}":""};'
-    // fit заморожен, пока активен пользовательский зум: измерять ширину
-    // увеличенного контента — петля «измерил больше → применил больше». Высота
-    // в зуме тоже не постим: m() по clientHeight зависит от уже выставленной
-    // высоты фрейма — храповик, высота сползала на 15px за цикл.
-    // ЕСТЕСТВЕННУЮ ширину (N) меряем ТОЛЬКО в незумнутом состоянии (K≈1):
-    // поведение scrollWidth под применённым zoom разнится по движкам и типам
-    // контента (у canvas-артефактов оставалась натуральной → деление на K
-    // дважды учитывало масштаб → K экспоненциально схлопывался до нуля,
-    // артефакт «мигал и исчезал»). Недостаток: если контент стал шире, пока
-    // фрейм сжат, перефит случится только после возврата к K≈1.
-    + 'var N=0;var fit=function(){if(U>1.001)return;var b=document.body;if(!b)return;'
-    + 'var w=document.documentElement.clientWidth||window.innerWidth;if(!w)return;'
-    + 'if(K>0.99){N=b.scrollWidth||N}if(!N)return;'
-    + 'var k=(N>w+1)?w/N:1;if(Math.abs(k-K)>=0.005){K=k;ap()}};'
+//
+// ДВА ПРАВИЛА ПРОТИВ ПЕТЕЛЬ (каждая правка здесь чинилась воспроизведением):
+// 1) Естественные размеры (N/NH) меряем ТОЛЬКО в немасштабированном состоянии
+//    (K≈1): поведение scrollWidth под применённым zoom разнится по движкам
+//    (у canvas-артефакта оставался натуральным → деление на K дважды учитывало
+//    масштаб → K схлопывался к нулю, артефакт «мигал и исчезал»).
+// 2) Измерений «под действием собственного эффекта» нет вообще: contain-бокс
+//    (BX/BY) приходит от родителя postMessage'ом (лайтбокс: вся сцена обязана
+//    влезать и в ширину, и в высоту), сам по себе фрейм свою целевую высоту
+//    не вычисляет из clientHeight (храповик на полосе прокрутки).
+const RESIZE_SNIPPET = '<script>(function(){var K=1,N=0,NH=0,BX=0,BY=0;var Z=document.body&&("zoom" in document.body.style);'
+    + 'var ap=function(){var b=document.body;if(!b)return;'
+    + 'if(Z){b.style.zoom=(K<0.999)?String(K):""}'
+    + 'else{b.style.transformOrigin="top center";b.style.transform=(K<0.999)?"scale("+K+")":""}};'
+    + 'var fit=function(){var b=document.body;if(!b)return;'
+    + 'var w=BX||document.documentElement.clientWidth||window.innerWidth;if(!w)return;'
+    + 'if(K>0.99){N=b.scrollWidth||N;NH=Math.max(b.getBoundingClientRect().height,b.scrollHeight)||NH}'
+    + 'if(!N)return;'
+    + 'var k=(N>w+1)?w/N:1;'
+    + 'if(BY&&NH>0&&NH*k>BY)k=BY/NH;'
+    + 'if(Math.abs(k-K)>=0.005){K=k;ap()}};'
     + 'var m=function(){var b=document.body;if(!b)return document.documentElement.scrollHeight;'
     + 'return Z?Math.max(b.getBoundingClientRect().height,b.scrollHeight)'
     + ':Math.max(b.getBoundingClientRect().height,b.scrollHeight*K)};'
-    + 'var p=function(){fit();if(U>1.001)return;try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
-    // Зум fit↔2×↔3× — дискретные уровни, как в PhotoSwipe. Триггер — двухпальцевый
-    // тап (мобилки: не конфликтует с одиночными тапами по интерактиву артефакта,
-    // двойной тап по игровой кнопке — обычное действие) или dblclick (десктоп).
-    + 'var two=false;var tz=function(){U=(U<1.5)?2:(U<2.5?3:1);ap();p()};'
-    + 'addEventListener("touchstart",function(e){if(e.touches.length>=2)two=true},{passive:true});'
-    + 'addEventListener("touchend",function(e){if(two&&e.touches.length===0){two=false;tz()}},{passive:true});'
-    + 'addEventListener("dblclick",tz);'
+    + 'var p=function(){fit();try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
+    // Лайтбокс шлёт доступный бокс {w,h}: contain — вся сцена влезает без
+    // обрезки по краям. Повторная отправка при повороте/ресайзе окна.
+    + 'addEventListener("message",function(e){var d=e&&e.data;if(d&&d.__dgContain){BX=d.__dgContain.w||0;BY=d.__dgContain.h||0;p()}});'
     + 'var fix=function(){document.querySelectorAll("[style*=vh]").forEach(function(el){var s=el.getAttribute("style");var t=String(s).replace(/(min-height|max-height|height)\\s*:\\s*100(?:s|l|d)?vh/gi,"$1:auto");if(t!==s)el.setAttribute("style",t)})};'
     + 'if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}'
     + 'if(typeof MutationObserver!=="undefined"){new MutationObserver(function(){fix();p()}).observe(document.documentElement,{attributes:true,attributeFilter:["style"],subtree:true})}'
@@ -443,8 +438,11 @@ export function deleteArtifact(msgId, artifactId) {
 }
 
 function closePopup() {
-    _popup?.el.remove();
-    _popup = null;
+    if (_popup) {
+        if (_popup.onResize) window.removeEventListener('resize', _popup.onResize);
+        _popup.el.remove();
+        _popup = null;
+    }
     document.documentElement?.classList.remove('dg-lock');
 }
 
@@ -482,9 +480,23 @@ function openPopup(artifact, msgId = null) {
     document.body.appendChild(overlay);
     // Скролл-лок фона: чат под оверлеем не крутится колесом/тачем (YARL-паттерн).
     document.documentElement.classList.add('dg-lock');
+    // Contain: весь артефакт влезает в видимый бокс лайтбокса без обрезки —
+    // фрейм сам масштабируется под присланный размер (см. RESIZE_SNIPPET).
+    // Переотправка при повороте телефона/ресайзе окна.
+    const sendContain = () => {
+        const dlg = overlay.querySelector('.dg-popup-dialog');
+        const header = overlay.querySelector('.dg-popup-dialog > header');
+        if (!dlg) return;
+        const w = Math.round(dlg.clientWidth);
+        const h = Math.round(Math.min(window.innerHeight * 0.86, 900) - (header?.offsetHeight ?? 40));
+        try { frame.contentWindow?.postMessage({ __dgContain: { w, h } }, '*'); } catch { /* фрейм ещё не проснулся */ }
+    };
+    frame.addEventListener('load', sendContain);
+    const onResize = () => sendContain();
+    window.addEventListener('resize', onResize);
     // Команды из iframe попапа (✎/⟳) маппятся на артефакт через это описание —
     // у popup-iframe нет shell-предка в посте.
-    _popup = { el: overlay, frame, msgId, artifactId: artifact.id ?? null };
+    _popup = { el: overlay, frame, msgId, artifactId: artifact.id ?? null, onResize };
 }
 
 let _editor = null;

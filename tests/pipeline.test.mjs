@@ -1,4 +1,5 @@
-// tests/pipeline.test.mjs
+// tests/pipeline.test.mjs — пайплайн: гарды запуска, коммит payload'а в
+// хранилище, отмена, фотослоты.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createPipeline, isExcluded } from '../src/pipeline.js';

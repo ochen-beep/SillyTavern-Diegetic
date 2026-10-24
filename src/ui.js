@@ -80,7 +80,7 @@ const CSS = `
 #dg-ext details > summary { cursor: pointer; padding: 7px 0; list-style-position: inside; }
 #dg-ext details[open] > summary { margin-bottom: 4px; }
 
-	/* Сегментный выбор источника */
+/* Сегментный выбор источника */
 #dg-ext .dg-seg { display: flex; gap: 3px; margin-bottom: 10px; padding: 3px;
   background: var(--black30, rgba(0,0,0,.25));
   border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.15)); border-radius: 10px; }
@@ -147,7 +147,7 @@ html.dg-lock, html.dg-lock body { overflow: hidden; overscroll-behavior: none; }
 html.dg-lock body { touch-action: none; }
 /* Б34: равновысотный плейсхолдер снятого вне экрана артефакта. */
 .dg-lazy { width: 100%; border: 1px dashed var(--SmartThemeBorderColor, rgba(255,255,255,.25)); border-radius: 8px; opacity: .35; box-sizing: border-box; }
-/* Б39:Reduced motion — пульс busy-кнопок отключаем. */
+/* Б39: reduced motion — пульс busy-кнопок отключаем. */
 @media (prefers-reduced-motion: reduce) {
   .dg-gen-btn.dg-busy i, .dg-launcher-btn.dg-busy { animation: none; }
   #dg-ext .dg-switch i, #dg-ext .dg-switch i::after { transition: none; }

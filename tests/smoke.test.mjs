@@ -1,4 +1,4 @@
-// tests/smoke.test.mjs
+// tests/smoke.test.mjs — работоспособность тест-раннера.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 

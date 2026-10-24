@@ -1,5 +1,6 @@
 // Одноразовая миграция legacy-формата (фенсы ```html в тексте сообщения)
-// в extra-модель. Идемпотентна: флаг chatMetadata.dg.migrated.
+// в extra-модель; следом migrateExtraToStore (store.js) выносит их в файловое
+// хранилище. Идемпотентна: флаг chatMetadata.dg.migrated.
 
 import { getCtx, chatData, saveChatData } from './core.js';
 import { persistChat } from './host.js';
@@ -46,7 +47,8 @@ export function extractLegacyArtifacts(text) {
     return out;
 }
 
-/** Старый prompt-strip regex умер вместе с fence-моделью — убрать, если остался. */
+/** TODO(несколько релизов): убрать вместе с миграцией — старый prompt-strip
+ *  regex умер вместе с fence-моделью. */
 function cleanupLegacyRegex(ctx) {
     const list = ctx?.extensionSettings?.regex;
     if (!Array.isArray(list)) return;
@@ -121,8 +123,8 @@ export async function migrateCurrentChat() {
 }
 
 // ── Миграция ключей хранилища: send_date → dg_id:слот ────────────────────
-// send_date варианта ST переставляет при регенерации свайпа и continue
-// (script.js:6679/6704) — адресация по дате теряла готовые пейлоады.
+// send_date варианта ST переставляет при регенерации свайпа и continue —
+// адресация по дате теряла готовые пейлоады (см. payload.js).
 // Одноразовый перенос существующих записей на стабильные ключи; идемпотентна.
 
 import { dgMessageId } from './payload.js';

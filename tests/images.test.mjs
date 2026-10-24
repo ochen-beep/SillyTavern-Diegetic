@@ -1,4 +1,5 @@
-// tests/images.test.mjs
+// tests/images.test.mjs — фотослоты: парсинг data-dg-img, состояния,
+// вставка/замена фото, правка промпта слота.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {

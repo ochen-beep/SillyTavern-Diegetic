@@ -1,4 +1,5 @@
-// tests/templates.test.mjs
+// tests/templates.test.mjs — встроенные основы templates/*.md: контракт один
+// раз, английский системный текст, запреты отказных формулировок.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';

@@ -1,6 +1,6 @@
 // index.js — точка входа нативного расширения Diegetic.
-// Тонкий оркестратор (форма Glosses/index.js): manifest-хуки + порядок init +
-// полный cleanup. Вся логика — в src/.
+// Тонкий оркестратор: manifest-хуки + порядок init + полный cleanup.
+// Вся логика — в src/.
 //
 // Хуки (manifest.json): activate → init (загрузка страницы), enable → init,
 // disable → cleanup, clean → cleanup + стереть данные расширения.
@@ -47,9 +47,9 @@ let boundEvents = [];
 const save = () => { saveSettings(settingsStorage, settings); };
 
 // Дескриптор источника для хоста: единственный профиль «source», собранный
-// из настроек (форма DS-Comments, без списка профилей). Общая для пайплайна
-// и «Проверить подключение» (Б36). extraBody примешивается к запросу и для
-// CM, и для custom — например, отключение reasoning у провайдера.
+// из настроек. Общая для пайплайна и «Проверить подключение» (Б36).
+// extraBody примешивается к запросу и для CM, и для custom — например,
+// отключение reasoning у провайдера.
 const getSourceProfile = () => ({
     id: 'source',
     name: 'Источник',
@@ -60,9 +60,9 @@ const getSourceProfile = () => ({
     httpAllowList: settings.httpAllowList,
 });
 
-async function getContextBlock(messageId, depth) {    const ctx = getCtx();
+async function getContextBlock(messageId, depth) {
+    const ctx = getCtx();
     const chat = getChat();
-    // Форма DS-Comments: история чата — отдельный тумблер, глубина задаётся числом.
     const from = settings.ctxHistory ? Math.max(0, Number(messageId) - depth) : Number(messageId);
     const to = Number(messageId) - 1;
     const lines = [];
@@ -93,9 +93,7 @@ function runBusy(id, opts = {}) {
     return pipeline.run(id, opts).finally(busyEnd);
 }
 
-// Ключ прогона координатора — dg_id: индекс mesid у живых узлов ST сдвигается
-// при удалении/перемещении постов, и отмена по свежему mesid не находила бы
-// прогон, запущенный под старым индексом (молча стартуя вторую генерацию).
+// Ключ прогона — стабильный dg_id, не индекс mesid (почему — см. payload.js).
 function dgIdOf(id) {
     const msg = getMessage(Number(id));
     return (msg && dgMessageId(msg)) || null;
@@ -155,7 +153,7 @@ async function init(isCancelled = () => false) {
         // Дескриптор источника — общая функция (используется и в testSource).
         getSourceProfile,
         // Шаблон резолвится по activeTemplate: встроенная основа — fetch, своя —
-        // из именованного хранилища настроек (форма DS-Comments).
+        // из именованного хранилища настроек.
         resolveTemplate: async () => {
             const name = settings.activeTemplate;
             if (isBuiltinTemplate(name)) return getBuiltinTemplate(name);
@@ -164,8 +162,7 @@ async function init(isCancelled = () => false) {
     });
     if (isCancelled()) return;
 
-    // Ленивый перенос legacy-ключей из настроек в localforage — до первого UI.
-    getBuiltinTemplate().catch((e) => warn('шаблон:', e)); // прогрев кэша
+    getBuiltinTemplate().catch((e) => warn('шаблон:', e)); // прогрев кэша шаблонов
 
     const $ = globalThis.jQuery ?? globalThis.$;
     // Шаблонные мутации возвращают новый объект настроек — подменяем и пишем.
@@ -191,7 +188,7 @@ async function init(isCancelled = () => false) {
         $,
         settings: () => settings,
         setEnabled: (v) => { settings.enabled = v; save(); },
-        // ── Источник генерации (форма DS-Comments: сегментный выбор) ──
+        // ── Источник генерации ──
         getSourceKind: () => settings.source,
         setSourceKind: (kind) => {
             settings.source = ['profile', 'custom'].includes(kind) ? kind : 'profile';
@@ -234,7 +231,7 @@ async function init(isCancelled = () => false) {
         },
         getCustomKey: () => getApiKey('source'),
         setCustomKey: (key) => setApiKey('source', String(key ?? '')),
-        // ── Шаблоны (форма DS-Comments: встроенные под замком + именованные) ──
+        // ── Шаблоны ──
         getActiveTemplate: () => settings.activeTemplate,
         isBuiltinTemplate,
         builtinTemplateList: () => BUILTIN_TEMPLATES,
@@ -328,9 +325,11 @@ async function init(isCancelled = () => false) {
         setCtxCharacter: (v) => { settings.ctxCharacter = v; save(); },
         setCtxWorld: (v) => { settings.ctxWorld = v; save(); },
         urisStatus,
-        // Подтверждение опасных действий панели (plain-HTTP endpoint, удаление шаблона).
+        // Подтверждение опасных действий панели (plain-HTTP endpoint,
+        // перезапись/удаление шаблона, detach хранилища).
         confirmDanger,
-        // Панельный список артефактов чата: скан extra + регенерация/удаление.
+        // Панельный список артефактов чата: скан payload'ов из хранилища +
+        // регенерация/удаление.
         listArtifacts: () => collectRows(getChat()),
         openArtifact: openArtifactPopup,
         saveArtifact: saveArtifactById,

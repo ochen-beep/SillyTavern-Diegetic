@@ -1,4 +1,5 @@
-// tests/payload.test.mjs
+// tests/payload.test.mjs — адресация payload'ов: ключ dg_id:слот, digest-гейт,
+// стабильность адресации при регенерациях и свайпах.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {

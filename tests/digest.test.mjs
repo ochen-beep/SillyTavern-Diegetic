@@ -1,4 +1,5 @@
-// tests/digest.test.mjs
+// tests/digest.test.mjs — дайджест текста (djb2, 8 hex) и viability-гейт
+// заглушек стрима.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { contentDigest, isViableMessageText, MIN_POST_LENGTH } from '../src/digest.js';

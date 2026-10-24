@@ -54,16 +54,14 @@ export function createPipeline(deps) {
         // перезаписывает тот же слот). Устаревший не блокирует: его содержание
         // принадлежит прежнему тексту, этот пост своих артефактов ещё не имел.
         // Чужой payload НЕ блокирует прогон: ST клонирует extra соседнего
-        // варианта в слот нового свайпа (script.js:3711) — новый вариант
-        // артефактов не имеет, генерируем, а не молча выходим.
+        // варианта в слот нового свайпа — новый вариант артефактов не имеет,
+        // генерируем, а не молча выходим.
         const rawPayload = readRawPayload(msg, swipeIdx);
         if (!force && rawPayload && !payloadBelongsToOtherVariant(msg, swipeIdx, rawPayload)
             && rawPayload.contentDigest === proseDigest) return;
 
-        // Прогон ключуется стабильным dg_id (не индексом mesid: ST сдвигает
-        // индексы при удалении/перемещении постов — клик отмены по свежему
-        // mesid не находил бы прогон под старым). Тот же dg_id — идентичность
-        // поста для коммита: индекс мог сдвинуться, пост ищем по dg_id.
+        // Прогон ключуется стабильным dg_id, не индексом mesid (см. payload.js);
+        // тот же dg_id — идентичность поста для коммита, который ищет его по dg_id.
         const runDgId = dgMessageId(msg, { create: true });
         const run = deps.coordinator.beginRun(runDgId);
         try {

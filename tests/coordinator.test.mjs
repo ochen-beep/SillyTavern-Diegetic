@@ -1,3 +1,5 @@
+// tests/coordinator.test.mjs — владение прогоном: слоты по dg_id, ревизии,
+// epoch, отмена по kind (gen/fill).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGenerationCoordinator } from '../src/coordinator.js';

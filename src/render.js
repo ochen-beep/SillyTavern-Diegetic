@@ -2,7 +2,7 @@
 // Reconcile: data-ключ, MutationObserver + debounce, точечные проходы.
 // Режимы показа (settings.displayMode):
 //   inline — iframe сразу в посте;
-//   expand — чип-ряд [тип][Copy HTML][Delete]; клик по типу раскрывает iframe в посте;
+//   expand — чип-ряд [тип ⤢ ⧉ ⤓ ✕]; клик по типу раскрывает iframe в посте;
 //   popup  — тот же чип-ряд, клик открывает лайтбокс поверх чата.
 // Развёрнутые чипы (expand) запоминаются в _expanded до перезагрузки страницы.
 //
@@ -48,9 +48,9 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 // обрезались (шпильки уходили за край). С shrink:0 сцена остаётся натуральной
 // ширины и масштабируется целиком.
 // touch-action:none: свайп-механики артефакта не должны зависеть от того,
-// вспомнила ли модель про preventDefault (пруд глушил жест сам, шпильки — нет).
-// Иначе жест цепляется к странице (iframe переполнению скроллить нечего),
-// а артефакту прилетает touchcancel — механика обрывается на полпути.
+// вспомнила ли модель про preventDefault — одни артефакты гасят жест сами,
+// другие нет. Иначе жест цепляется к странице (iframe переполнению скроллить
+// нечего), а артефакту прилетает touchcancel — механика обрывается на полпути.
 // Цена: по площади артефакта чат не листается — скролл на тексте вокруг.
 const ARTIFACT_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob:; media-src data: blob:; connect-src data: blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 // prefers-reduced-motion (Б39): модели любят вечные анимации — для пользователей
@@ -155,14 +155,14 @@ const _expanded = new Set();
 const _imgCache = new Map();
 
 /** Сброс кэша фото при смене чата — data:-URL привязаны к чату, расти дальше не должны.
- *  Рядом чистится кэш высот (Б34) — ключи включают dg_id чужого чата. */
+ *  Рядом чистится кэш высот (Б34): ключи оболочек имеют смысл только в своём чате. */
 export function clearImageCache() { _imgCache.clear(); _heightCache.clear(); }
 
 const baseKey = (a) => `${a.id}|${contentDigest(a.html)}`;
 // Полный ключ оболочки: id|digest|open/closed|lazy/eager. id и digest не
 // содержат '|', поэтому baseKey из полного ключа — первые два сегмента.
-// Регресс Б34: обрезка старым регексом /\|[oc]$/ не цепляла хвост ленивости
-// — на мобильном профиле «развернуть/свернуть» молча не работало.
+// Регресс Б48 (потомок Б34): обрезка старым регексом /\|[oc]$/ не цепляла
+// хвост ленивости — на мобильном профиле «развернуть/свернуть» молча не работало.
 export const baseKeyOfKey = (key) => String(key ?? '').split('|').slice(0, 2).join('|');
 /** inline — всегда iframe; expand — по памяти раскрытий; popup — всегда чип. */
 const isOpen = (a) => {
@@ -179,8 +179,8 @@ const shellKey = (a) => `${baseKey(a)}|${isOpen(a) ? 'o' : 'c'}|${lazyActive() ?
 // Десятки живых iframe в длинном чате — CPU/батарея и мобильные фризы
 // (ST#5703), а хосты с виртуализацией DOM (TauriTavern 2.2+) сняли бы их сами.
 // Вне вьюпорта (±600px) iframe снимается и остаётся равновысотный
-// плейсхолдер (высота — из рукопожатия; приём JSR PR #86 — без прыжков
-// скролла). Состояние артефакта при снятии теряется — потому настройка.
+// плейсхолдер (высота — из рукопожатия), скролл не прыгает.
+// Состояние артефакта при снятии теряется — потому настройка.
 // popup-фреймы ленивыми не бывают.
 const _heightCache = new Map(); // baseKey → px последнего рукопожатия
 let _lazyIO = null;
@@ -451,7 +451,7 @@ function buildShell(artifact, key, msgId) {
     shell.setAttribute(SHELL_ATTR, key);
     shell.setAttribute('data-dg-msg', String(msgId));
     if (!open) {
-        // Чип-ряд вместо артефакта: тип + Copy + Delete. Orphan помечен ⚠ (Б38):
+        // Чип-ряд вместо артефакта: тип + меню действий. Orphan помечен ⚠ (Б38):
         // читатель чата видит, что артефакт «в конце поста» — не случайность.
         shell.className = 'dg-shell dg-chiprow';
         const open = document.createElement('button');
@@ -491,8 +491,8 @@ function buildShell(artifact, key, msgId) {
             if (frame.isConnected) mountFrameHtml(frame, frameHtml());
         });
     }
-    // Меню живёт вместе с показанным артефактом в любом режиме — скопировать /
-    // сохранить / удалить; «Свернуть» добавляется только в expand-режиме.
+    // Меню действий (⤢ ⧉ ⤓ ✕) живёт вместе с показанным артефактом в любом
+    // режиме; «Свернуть» добавляется только в expand-режиме.
     const mode = _deps?.settings?.().displayMode ?? 'inline';
     shell.appendChild(buildActionRow({ collapse: mode === 'expand' }));
     return shell;

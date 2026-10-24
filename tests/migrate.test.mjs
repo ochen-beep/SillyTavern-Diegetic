@@ -1,4 +1,5 @@
-// tests/migrate.test.mjs
+// tests/migrate.test.mjs — миграции: legacy-фенсы в extra, перенос ключей
+// хранилища send_date → dg_id:слот.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { hasOwnBlock, stripOwnBlocks, extractLegacyArtifacts } from '../src/migrate.js';

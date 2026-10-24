@@ -1,4 +1,5 @@
-// tests/cm.test.mjs
+// tests/cm.test.mjs — чистая логика CM-источника: нормализация профилей,
+// сообщения для sendRequest, извлечение текста из форм ответа.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeCmProfiles, buildCmMessages, extractCmText, cmErrorMessage } from '../src/cm.js';

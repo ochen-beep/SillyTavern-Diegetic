@@ -1,3 +1,5 @@
+// tests/contract.test.mjs — машинный контракт и сборка промпта: контракт
+// вставляется ровно один раз, задача — первой строкой.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

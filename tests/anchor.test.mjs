@@ -1,4 +1,5 @@
-// tests/anchor.test.mjs
+// tests/anchor.test.mjs — матчинг якорей: нормализация, точный матч с картой
+// офсетов, fuzzy-поиск по словам с бюджетом.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeAnchorKey, findAnchorInText, findAllAnchorSpans, findFuzzySpan } from '../src/anchor.js';

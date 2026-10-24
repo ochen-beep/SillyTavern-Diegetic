@@ -1,4 +1,5 @@
-// tests/context.test.mjs
+// tests/context.test.mjs — сборка контекста генерации: персона/карточка/лор,
+// порядок блоков, отказоустойчивость секций.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { formatContextParts, collectContext } from '../src/context.js';

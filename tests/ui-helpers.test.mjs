@@ -1,4 +1,4 @@
-// tests/ui-helpers.test.mjs
+// tests/ui-helpers.test.mjs — панельные хелперы: collectRows, artifactListHtml, esc.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { collectRows, esc } from '../src/ui.js';

@@ -1,3 +1,5 @@
+// tests/settings.test.mjs — нормализация настроек: мусор → дефолты,
+// legacy-миграции (профили, шаблоны, источник 'current').
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS, normalizeSettings, loadSettings, saveSettings } from '../src/settings.js';

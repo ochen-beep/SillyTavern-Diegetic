@@ -1,3 +1,5 @@
+// tests/parser.test.mjs — разбор ответа модели: пары comment+fence, repair
+// JSON, сегментация между заголовками.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseDiegeticResponse, repairJson } from '../src/parser.js';

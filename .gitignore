@@ -19,3 +19,14 @@ docs/
 
 # QA stand (mock-endpoint), not part of the distributed extension
 .qa/
+
+# Lockfile: расширение без зависимостей, ставится копированием (конвенция DS-Comments)
+package-lock.json
+
+# Будущие E2E-прогоны (qa-plan 4.2-4.3): отчёты и артефакты не коммитим
+playwright-report/
+test-results/
+
+# Секреты стенда для E2E, если появятся
+.env
+.env.*

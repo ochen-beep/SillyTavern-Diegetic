@@ -17,6 +17,8 @@ import {
 } from './payload.js';
 import { normalizeAnchorKey, findAnchorInText, findFuzzySpan } from './anchor.js';
 import { contentDigest } from './digest.js';
+import { stashForUndo } from './undo.js';
+import { tr } from './i18n.js';
 
 export const SHELL_ATTR = 'data-dg-shell';
 const FRAME_CLASS = 'dg-frame';
@@ -28,6 +30,13 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 
 // Артефакт — полноценный документ со скриптами; песочница opaque-origin,
 // allow-same-origin НЕ давать (иначе скрипт артефакта достаёт parent DOM).
+// CSP-мета (Б17): опорный ST CSP хоста отключён, а blob-документ наследует
+// пустую политику — без неё LLM-артефакт может ходить в сеть (fetch/WebSocket/
+// <img src> наружу = канал экфильтрации). Политика: всё inline (артефакт
+// самодостаточен), сеть закрыта (connect-src только data:/blob:), внешние
+// ресурсы — только шрифты Google (шаблон universal.md их требует; font-хосты
+// канала утечки данных не дают). wasm/eval разрешены: LLM-код их использует,
+// изоляцию они не ослабляют.
 // Высота — postMessage-рукопожатие; html принудительно прозрачный и без
 // скроллбаров (иммерсивная вставка — скролл внутри артефакта не трогаем).
 // html/body — нулевой min-height: иначе 100vh-ловушка на body раздувает
@@ -43,7 +52,10 @@ const stripMd = (s) => String(s ?? '').replace(/[*_~`#>]/g, '');
 // Иначе жест цепляется к странице (iframe переполнению скроллить нечего),
 // а артефакту прилетает touchcancel — механика обрывается на полпути.
 // Цена: по площади артефакта чат не листается — скролл на тексте вокруг.
-const IMMERSIVE_CSS = '<style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}body>*{flex-shrink:0!important}html,body{touch-action:none}</style>';
+const ARTIFACT_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob:; media-src data: blob:; connect-src data: blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+// prefers-reduced-motion (Б39): модели любят вечные анимации — для пользователей
+// с настроенной чувствительностью к движению гасим их в самом артефакте.
+const IMMERSIVE_CSS = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}"><style>html,body{margin:0!important;padding:0!important;min-height:0!important;height:auto!important;background:transparent!important}html{overflow:hidden!important}body>*{flex-shrink:0!important}html,body{touch-action:none}@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}</style>`;
 // Рантайм-высота меряется по body, а не по documentElement.scrollHeight:
 // у корневого скроллера scrollHeight не опускается ниже вьюпорта фрейма,
 // поэтому после роста (раскрытие «слоя») iframe никогда не сжимался обратно —
@@ -91,7 +103,10 @@ const RESIZE_SNIPPET = '<script>(function(){var K=1,N=0,NH=0,BX=0,BY=0;var Z=doc
 // Клики внутри sandbox-iframe (opaque origin) до родительского document не доходят —
 // команды контролов (✎/⟳) уходят postMessage'ом, по образцу рукопожатия высоты.
 // Capture + stopPropagation: клик по контролу не должен будить JS самого артефакта.
-const CMD_SNIPPET = '<script>document.addEventListener("click",function(e){var t=e.target&&e.target.closest?e.target.closest("[data-dg-cmd]"):null;if(!t)return;e.preventDefault();e.stopPropagation();try{parent.postMessage({__dgCmd:String(t.getAttribute("data-dg-cmd")),ordinal:Number(t.getAttribute("data-ordinal"))},"*")}catch(x){}},true)</' + 'script>';
+// Esc (Б1) — тоже postMessage: keydown из iframe до родителя не доходит, и
+// лайтбокс не закрывался после клика в артефакт. Родитель реагирует, только
+// если у него открыт попап/редактор — Esc-механики самого артефакта не трогаем.
+const CMD_SNIPPET = '<script>document.addEventListener("click",function(e){var t=e.target&&e.target.closest?e.target.closest("[data-dg-cmd]"):null;if(!t)return;e.preventDefault();e.stopPropagation();try{parent.postMessage({__dgCmd:String(t.getAttribute("data-dg-cmd")),ordinal:Number(t.getAttribute("data-ordinal"))},"*")}catch(x){}},true);document.addEventListener("keydown",function(e){if(e.key==="Escape"){try{parent.postMessage({__dgEsc:1},"*")}catch(x){}}},true)</' + 'script>';
 // Фрагменты без <head>/<html> (модель отдала кусок документа) проходили бы
 // мимо обеих замен — стили в начало строки: браузер допарсит фрагмент
 // и подхватит их.
@@ -139,10 +154,16 @@ const _expanded = new Set();
  *  хоста не даёт opaque-iframe грузить их напрямую); null = загрузка идёт. */
 const _imgCache = new Map();
 
-/** Сброс кэша фото при смене чата — data:-URL привязаны к чату, расти дальше не должны. */
-export function clearImageCache() { _imgCache.clear(); }
+/** Сброс кэша фото при смене чата — data:-URL привязаны к чату, расти дальше не должны.
+ *  Рядом чистится кэш высот (Б34) — ключи включают dg_id чужого чата. */
+export function clearImageCache() { _imgCache.clear(); _heightCache.clear(); }
 
 const baseKey = (a) => `${a.id}|${contentDigest(a.html)}`;
+// Полный ключ оболочки: id|digest|open/closed|lazy/eager. id и digest не
+// содержат '|', поэтому baseKey из полного ключа — первые два сегмента.
+// Регресс Б34: обрезка старым регексом /\|[oc]$/ не цепляла хвост ленивости
+// — на мобильном профиле «развернуть/свернуть» молча не работало.
+export const baseKeyOfKey = (key) => String(key ?? '').split('|').slice(0, 2).join('|');
 /** inline — всегда iframe; expand — по памяти раскрытий; popup — всегда чип. */
 const isOpen = (a) => {
     const mode = _deps?.settings?.().displayMode ?? 'inline';
@@ -150,7 +171,73 @@ const isOpen = (a) => {
     if (mode === 'expand') return _expanded.has(baseKey(a));
     return false;
 };
-const shellKey = (a) => `${baseKey(a)}|${isOpen(a) ? 'o' : 'c'}`;
+// Б34: ленивые фреймы — часть ключа оболочки, чтобы смена режима вызывала
+// честную перестройку (iframe ↔ плейсхолдер), а не «как повезёт».
+const shellKey = (a) => `${baseKey(a)}|${isOpen(a) ? 'o' : 'c'}|${lazyActive() ? 'l' : 'e'}`;
+
+// ── Ленивые iframe (Б34) ─────────────────────────────────────────────
+// Десятки живых iframe в длинном чате — CPU/батарея и мобильные фризы
+// (ST#5703), а хосты с виртуализацией DOM (TauriTavern 2.2+) сняли бы их сами.
+// Вне вьюпорта (±600px) iframe снимается и остаётся равновысотный
+// плейсхолдер (высота — из рукопожатия; приём JSR PR #86 — без прыжков
+// скролла). Состояние артефакта при снятии теряется — потому настройка.
+// popup-фреймы ленивыми не бывают.
+const _heightCache = new Map(); // baseKey → px последнего рукопожатия
+let _lazyIO = null;
+
+function lazyActive() {
+    const mode = _deps?.settings?.().lazyFrames ?? 'auto';
+    if (mode === 'off' || typeof IntersectionObserver === 'undefined') return false;
+    if (mode === 'on') return true;
+    return (globalThis.window?.innerWidth ?? 1024) < 768;
+}
+
+function ensureLazyIO() {
+    if (_lazyIO || !lazyActive()) return _lazyIO;
+    _lazyIO = new IntersectionObserver((entries) => {
+        for (const en of entries) {
+            const shell = en.target;
+            if (!shell?.hasAttribute?.(SHELL_ATTR)) continue;
+            if (en.isIntersecting) mountFrameInShell(shell);
+            else unmountToPlaceholder(shell);
+        }
+    }, { rootMargin: '600px 0px' });
+    return _lazyIO;
+}
+
+/** Собрать iframe артефакта и вставить вместо плейсхолдера. */
+function mountFrameInShell(shell) {
+    if (shell.querySelector(`iframe.${FRAME_CLASS}`)) return;
+    const key = shell.getAttribute(SHELL_ATTR) ?? '';
+    const msgId = Number(shell.getAttribute('data-dg-msg'));
+    const artifact = artifactByKey(Number.isFinite(msgId) ? msgId : null, key);
+    if (!artifact) return;
+    const ph = shell.querySelector('.dg-lazy');
+    const frame = document.createElement('iframe');
+    frame.className = FRAME_CLASS;
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.setAttribute('title', String(artifact.type || 'artifact'));
+    const html = patchStoredArtifact(artifact.html);
+    const frameHtml = () => frameDoc(withCachedImages(withImmersiveCss(html)) + RESIZE_SNIPPET + CMD_SNIPPET);
+    mountFrameHtml(frame, frameHtml());
+    if (/src="(\/user\/images\/[^"]+)"/.test(html)) {
+        warmImages(html).then(() => { if (frame.isConnected) mountFrameHtml(frame, frameHtml()); });
+    }
+    if (ph) ph.replaceWith(frame);
+    else shell.prepend(frame);
+}
+
+/** Снять iframe, оставив плейсхолдер той же высоты (скролл не прыгает). */
+function unmountToPlaceholder(shell) {
+    const frame = shell.querySelector(`iframe.${FRAME_CLASS}`);
+    if (!frame) return;
+    const key = shell.getAttribute(SHELL_ATTR) ?? '';
+    const h = parseFloat(frame.style.height) || _heightCache.get(key) || 80;
+    const ph = document.createElement('div');
+    ph.className = 'dg-lazy';
+    ph.style.height = `${Math.max(40, Math.round(h))}px`;
+    frame.replaceWith(ph);
+}
 
 // Контролы фотослота (✎ промпт, ⟳ перегенерация) — display-only: payload кнопок
 // не хранит, сохранённый .html остаётся чистым артефактом. Стили лежат здесь же —
@@ -294,33 +381,33 @@ function buildActionRow({ collapse = false } = {}) {
         fold.type = 'button';
         fold.className = 'dg-chip';
         fold.setAttribute('data-dg-collapse', '');
-        fold.textContent = '▾ Свернуть';
+        fold.textContent = tr('▾ Collapse', 'diegetic.action.collapse');
         row.appendChild(fold);
     }
     const pop = document.createElement('button');
     pop.type = 'button';
     pop.className = 'dg-chip-action';
     pop.setAttribute('data-dg-pop', '');
-    pop.title = 'Открыть поверх чата';
+    pop.title = tr('Open over the chat', 'diegetic.action.pop');
     pop.textContent = '⤢';
     row.appendChild(pop);
     const copy = document.createElement('button');
     copy.type = 'button';
     copy.className = 'dg-chip-action';
     copy.setAttribute('data-dg-copy', '');
-    copy.title = 'Копировать HTML';
+    copy.title = tr('Copy HTML', 'diegetic.action.copy');
     copy.textContent = '⧉';
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'dg-chip-action';
     save.setAttribute('data-dg-save', '');
-    save.title = 'Сохранить как .html — открыть в браузере и потыкать';
+    save.title = tr('Save as .html — open it in a browser and poke it', 'diegetic.action.save');
     save.textContent = '⤓';
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'dg-chip-action';
     del.setAttribute('data-dg-del', '');
-    del.title = 'Удалить артефакт из поста';
+    del.title = tr('Remove the artifact from the post', 'diegetic.action.delete');
     del.textContent = '✕';
     row.append(copy, save, del);
     return row;
@@ -337,18 +424,25 @@ function frameDoc(html) {
 }
 // Старый blob отзываем ТОЛЬКО после загрузки нового документа: синхронный revoke
 // до load на медленных движках (мобильная Opera) через раз убивал фрейм в полёте —
-// «пустой лайтбокс/фрейм». Страховка: если за 2.5с не пришло рукопожатие высоты
+// «пустой лайтбокс/фрейм». Страховка: если за 4 c не пришло рукопожатие высоты
 // (загрузка умерла молча), перезагружаем тот же blob — он гарантированно жив.
+// Одна перезагрузка на монтаж (флаг dgReloaded): ранее медленный фрейм
+// перезагружался повторно, и скрипты артефакта исполнялись дважды (Б28) —
+// у артефактов с сайд-эффектами (счётчики, запросы) дублировалось состояние.
 function mountFrameHtml(frame, html) {
     const prev = frame.dataset.dgBlob;
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
     frame.dataset.dgBlob = url;
     frame.dataset.dgHSeen = '';
+    frame.dataset.dgReloaded = '';
     frame.src = url;
     if (prev) frame.addEventListener('load', () => URL.revokeObjectURL(prev), { once: true });
     setTimeout(() => {
-        if (!frame.dataset.dgHSeen && frame.isConnected) frame.src = frame.dataset.dgBlob;
-    }, 2500);
+        if (!frame.dataset.dgHSeen && frame.isConnected && !frame.dataset.dgReloaded) {
+            frame.dataset.dgReloaded = '1';
+            frame.src = frame.dataset.dgBlob;
+        }
+    }, 4000);
 }
 
 function buildShell(artifact, key, msgId) {
@@ -357,17 +451,31 @@ function buildShell(artifact, key, msgId) {
     shell.setAttribute(SHELL_ATTR, key);
     shell.setAttribute('data-dg-msg', String(msgId));
     if (!open) {
-        // Чип-ряд вместо артефакта: тип + Copy + Delete.
+        // Чип-ряд вместо артефакта: тип + Copy + Delete. Orphan помечен ⚠ (Б38):
+        // читатель чата видит, что артефакт «в конце поста» — не случайность.
         shell.className = 'dg-shell dg-chiprow';
         const open = document.createElement('button');
         open.type = 'button';
         open.className = 'dg-chip';
         open.setAttribute('data-dg-open', '');
-        open.textContent = String(artifact.type || 'artifact');
+        open.textContent = String(artifact.type || 'artifact') + (artifact.status === 'orphan' ? ' ⚠' : '');
+        if (artifact.status === 'orphan') open.title = tr('Anchor not found — the artifact is shown at the end of the post', 'diegetic.orphan.title');
         shell.append(open, ...buildActionRow().children);
         return shell;
     }
     shell.className = 'dg-shell';
+    // Б34: в ленивом режиме вместо iframe — равновысотный плейсхолдер; реальный
+    // фрейм монтирует IntersectionObserver, когда оболочка подошла к экрану.
+    if (lazyActive()) {
+        const ph = document.createElement('div');
+        ph.className = 'dg-lazy';
+        ph.style.height = `${Math.max(40, _heightCache.get(key) || 80)}px`;
+        shell.appendChild(ph);
+        ensureLazyIO()?.observe(shell);
+        const modeLazy = _deps?.settings?.().displayMode ?? 'inline';
+        shell.appendChild(buildActionRow({ collapse: modeLazy === 'expand' }));
+        return shell;
+    }
     const frame = document.createElement('iframe');
     frame.className = FRAME_CLASS;
     frame.setAttribute('sandbox', 'allow-scripts');
@@ -417,20 +525,35 @@ async function copyText(text) {
     return ok;
 }
 
-/** Сохранить артефакт как standalone .html (Blob + a[download], без сервера):
+/** Сохранить артефакт как standalone .html: Blob + a[download], без сервера;
  *  файл открывается двойным кликом в любом браузере — артефакт и есть
  *  полноценный документ по контракту. Сгенерированные фото (/user/images)
- *  встраиваются data:-URL'ами: вне таверны по пути хоста они бы не открылись. */
+ *  встраиваются data:-URL'ами: вне таверны по пути хоста они бы не открылись.
+ *  Б2: iOS Safari игнорирует download у blob:URL — там первичен share-sheet
+ *  («Сохранить в Файлы»), a[download] остаётся фолбэком. */
 async function saveArtifactFile(artifact) {
     const raw = String(artifact.html);
     await warmImages(raw); // промах кэша — src остаётся путём, файл всё равно сохраняем
     const html = withCachedImages(raw);
+    const safe = (s) => String(s ?? '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '') || 'artifact';
+    const fileName = `diegetic-${safe(artifact.type)}-${safe(artifact.id)}.html`;
+    const canShareFiles = typeof navigator.share === 'function' && typeof navigator.canShare === 'function'
+        && (() => { try { return navigator.canShare({ files: [new File([''], 'x.html', { type: 'text/html' })] }); } catch { return false; } })();
+    if (canShareFiles) {
+        try {
+            const file = new File([html], fileName, { type: 'text/html;charset=utf-8' });
+            await navigator.share({ files: [file] });
+            return; // share-лист отработал (отмена пользователем — не ошибка)
+        } catch (e) {
+            if (e?.name === 'AbortError') return;
+            // иная ошибка share — падаем в путь a[download]
+        }
+    }
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const safe = (s) => String(s ?? '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '') || 'artifact';
-    a.download = `diegetic-${safe(artifact.type)}-${safe(artifact.id)}.html`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -438,6 +561,9 @@ async function saveArtifactFile(artifact) {
 }
 
 /** Удалить артефакт из payload; пустой payload снимается целиком.
+ *  Отмена — кликом по тосту в течение окна (Б24): прежний payload прячется
+ *  в память, confirm-трение не нужно. Оплаченный контент не теряется от
+ *  случайного клика.
  *  Экспорт — панельный список артефактов (ui.js) удаляет через index.js. */
 export function deleteArtifact(msgId, artifactId) {
     const msg = getMessage(msgId);
@@ -447,20 +573,46 @@ export function deleteArtifact(msgId, artifactId) {
     if (!payload) return;
     const rest = payload.artifacts.filter(a => a.id !== artifactId);
     if (rest.length === payload.artifacts.length) return;
+    const undo = stashForUndo(msg, swipeIdx, payload);
     if (rest.length) writePayload(msg, swipeIdx, { ...payload, artifacts: rest });
     else clearPayload(msg, swipeIdx);
     persistChat();
     reconcileMessage(msgId);
+    if (undo) {
+        globalThis.toastr?.success(tr('Diegetic: artifact deleted — click here to undo', 'diegetic.toast.deleted'), 'Diegetic', {
+            timeOut: 10_000,
+            onclick: () => {
+                if (undo()) {
+                    persistChat();
+                    reconcile();
+                    globalThis.toastr?.success(tr('Diegetic: deletion undone — artifact restored', 'diegetic.toast.deleteUndone'));
+                }
+            },
+        });
+    }
 }
 
 function closePopup() {
     if (_popup) {
-        if (_popup.onResize) window.removeEventListener('resize', _popup.onResize);
+        if (_popup.onResize) {
+            window.removeEventListener('resize', _popup.onResize);
+            // Б14: скрытие/появление URL-бара мобильного браузера меняет
+            // вьюпорт без window.resize — contain надо пересчитывать и тут.
+            globalThis.visualViewport?.removeEventListener?.('resize', _popup.onResize);
+        }
         _popup.el.remove();
         _popup = null;
     }
     document.documentElement?.classList.remove('dg-lock');
+    // Вернуть фокус туда, откуда лайтбокс открыли (клавиатурный сценарий).
+    if (_returnFocus) {
+        try { _returnFocus.focus?.(); } catch { /* элемент уже мёртв */ }
+        _returnFocus = null;
+    }
 }
+
+/** Куда вернуть фокус после закрытия лайтбокса (Б1/a11y). */
+let _returnFocus = null;
 
 /** Панельная библиотека (ui.js): открыть артефакт в лайтбоксе по msgId + id. */
 export function openArtifactPopup(msgId, artifactId) {
@@ -473,14 +625,14 @@ export async function saveArtifactById(msgId, artifactId) {
     const a = artifactByKey(msgId, artifactId);
     if (!a) return;
     await saveArtifactFile(a);
-    globalThis.toastr?.success('Diegetic: файл сохранён — открой его в браузере');
+    globalThis.toastr?.success(tr('Diegetic: file saved — open it in your browser', 'diegetic.toast.savedFile'));
 }
 
 function openPopup(artifact, msgId = null) {
     closePopup();
     const overlay = document.createElement('div');
     overlay.className = 'dg-popup';
-    overlay.innerHTML = `<div class="dg-popup-backdrop" data-dg-close></div><section class="dg-popup-dialog" role="dialog" aria-modal="true"><header><strong>${escAttr(artifact.type || 'artifact')}</strong><button type="button" class="dg-popup-close" data-dg-close aria-label="Закрыть">×</button></header></section>`;
+    overlay.innerHTML = `<div class="dg-popup-backdrop" data-dg-close></div><section class="dg-popup-dialog" role="dialog" aria-modal="true"><header><strong>${escAttr(artifact.type || 'artifact')}</strong><button type="button" class="dg-popup-close" data-dg-close aria-label="${tr('Close', 'diegetic.slot.close')}">×</button></header></section>`;
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', 'allow-scripts');
     const html = withImmersiveCss(patchStoredArtifact(String(artifact.html)));
@@ -494,6 +646,10 @@ function openPopup(artifact, msgId = null) {
     overlay.querySelector('.dg-popup-dialog').appendChild(frame);
     overlay.addEventListener('click', (e) => { if (e.target.closest('[data-dg-close]')) closePopup(); });
     document.body.appendChild(overlay);
+    // Фокус в диалог сразу: клавиатурный пользователь уже «внутри», Esc сработает
+    // без лишнего клика; после закрытия фокус вернётся на инициатора.
+    _returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    overlay.querySelector('.dg-popup-close')?.focus();
     // Скролл-лок фона: чат под оверлеем не крутится колесом/тачем (YARL-паттерн).
     document.documentElement.classList.add('dg-lock');
     // Contain: весь артефакт влезает в видимый бокс лайтбокса без обрезки —
@@ -510,6 +666,7 @@ function openPopup(artifact, msgId = null) {
     frame.addEventListener('load', sendContain);
     const onResize = () => sendContain();
     window.addEventListener('resize', onResize);
+    globalThis.visualViewport?.addEventListener?.('resize', onResize);
     // Команды из iframe попапа (✎/⟳) маппятся на артефакт через это описание —
     // у popup-iframe нет shell-предка в посте.
     _popup = { el: overlay, frame, msgId, artifactId: artifact.id ?? null, onResize };
@@ -530,18 +687,18 @@ function openSlotEditor(msgId, artifactId, ordinal) {
     overlay.className = 'dg-popup dg-slot-editor';
     overlay.innerHTML = '<div class="dg-popup-backdrop" data-dg-close></div>'
         + '<section class="dg-popup-dialog dg-editor-dialog" role="dialog" aria-modal="true">'
-        + '<header><strong>Промпт фотослота</strong>'
-        + '<button type="button" class="dg-popup-close" data-dg-close aria-label="Закрыть">×</button></header>'
-        + '<label class="dg-editor-row">Триггер<select data-f="trigger">'
-        + '<option value="">— без триггера —</option>'
-        + '<option value="selfie">selfie — персонаж в кадре, вертикальный кадр</option>'
-        + '<option value="img">img — предмет, документ</option>'
-        + '<option value="scene">scene — место, панорама, интерьер</option>'
+        + '<header><strong>' + tr('Photo slot prompt', 'diegetic.slot.editorTitle') + '</strong>'
+        + '<button type="button" class="dg-popup-close" data-dg-close aria-label="' + tr('Close', 'diegetic.slot.close') + '">×</button></header>'
+        + '<label class="dg-editor-row">' + tr('Trigger', 'diegetic.slot.trigger') + '<select data-f="trigger">'
+        + '<option value="">' + tr('— no trigger —', 'diegetic.slot.noTrigger') + '</option>'
+        + '<option value="selfie">' + tr('selfie — character in frame, vertical shot', 'diegetic.slot.triggerSelfie') + '</option>'
+        + '<option value="img">' + tr('img — object, document', 'diegetic.slot.triggerImg') + '</option>'
+        + '<option value="scene">' + tr('scene — place, panorama, interior', 'diegetic.slot.triggerScene') + '</option>'
         + '</select></label>'
-        + '<textarea data-f="desc" rows="5" placeholder="Описание кадра на английском: кто/что, ракурс, свет"></textarea>'
+        + '<textarea data-f="desc" rows="5" placeholder="' + tr('Shot description in English: who/what, angle, light', 'diegetic.slot.descPlaceholder') + '"></textarea>'
         + '<footer class="dg-editor-actions">'
-        + '<button type="button" class="dg-chip-action" data-f="save">Сохранить</button>'
-        + '<button type="button" class="dg-chip-action" data-f="regen">Сохранить и перегенерировать</button>'
+        + '<button type="button" class="dg-chip-action" data-f="save">' + tr('Save', 'diegetic.slot.save') + '</button>'
+        + '<button type="button" class="dg-chip-action" data-f="regen">' + tr('Save and regenerate', 'diegetic.slot.saveRegen') + '</button>'
         + '</footer></section>';
     const sel = overlay.querySelector('[data-f="trigger"]');
     const ta = overlay.querySelector('[data-f="desc"]');
@@ -603,7 +760,11 @@ function onKeydown(e) {
 export function ensureMsgButtons(mesEl, msgId, msg) {
     const btns = mesEl.querySelector('.mes_buttons');
     if (!btns) return;
-    if (_deps?.settings?.().buttonMode !== 'post') {
+    // Б4: bar-режим без найденного QR-хоста — runtime-флаг barFallback держит
+    // ◆ у постов (ставит index.js через 3 c после init + тост).
+    const st = _deps?.settings?.();
+    const keepPost = st?.buttonMode === 'post' || (st?.buttonMode === 'bar' && st?.barFallback);
+    if (!keepPost) {
         btns.querySelector('.dg-gen-btn')?.remove();
         btns.querySelector('.dg-photo-btn')?.remove();
         return;
@@ -629,7 +790,7 @@ export function ensureMsgButtons(mesEl, msgId, msg) {
     }
     // Не перетирать тултип «Отменить генерацию», пока кнопка в busy.
     if (!gen.classList?.contains('dg-busy')) {
-        gen.title = hasPayload ? 'Перегенерировать артефакты' : 'Сгенерировать артефакт';
+        gen.title = hasPayload ? tr('Regenerate artifacts', 'diegetic.btn.regenerate') : tr('Generate an artifact', 'diegetic.btn.generate');
     }
     // 📷 — только когда есть что заполнять и режим «по кнопке».
     let cam = btns.querySelector('.dg-photo-btn');
@@ -637,7 +798,7 @@ export function ensureMsgButtons(mesEl, msgId, msg) {
     if (wantCam && !cam) {
         cam = document.createElement('div');
         cam.className = 'mes_button dg-photo-btn';
-        cam.title = 'Сгенерировать фото для слотов (URIS)';
+        cam.title = tr('Generate photos for slots (URIS)', 'diegetic.btn.photo');
         cam.textContent = '📷';
         cam.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -659,7 +820,7 @@ export function setGenerating(on) {
         b.classList.toggle('dg-busy', on);
         if (on) {
             if (!b.dataset.dgTitle) b.dataset.dgTitle = b.title || '';
-            b.title = 'Отменить генерацию';
+            b.title = tr('Cancel generation', 'diegetic.btn.cancel');
         } else if (b.dataset.dgTitle) {
             b.title = b.dataset.dgTitle;
             delete b.dataset.dgTitle;
@@ -796,19 +957,19 @@ function onDocumentClick(e) {
         }
         if (e.target.closest('[data-dg-copy]')) {
             const a = artifactByKey(msgId, key);
-            if (a) copyText(a.html).then((ok) => globalThis.toastr?.[ok ? 'success' : 'error'](ok ? 'Diegetic: HTML скопирован' : 'Diegetic: копирование не удалось'));
+            if (a) copyText(a.html).then((ok) => globalThis.toastr?.[ok ? 'success' : 'error'](ok ? tr('Diegetic: HTML copied', 'diegetic.toast.copied') : tr('Diegetic: copying failed', 'diegetic.toast.copyFailed')));
             return;
         }
         if (e.target.closest('[data-dg-save]')) {
             const a = artifactByKey(msgId, key);
             if (a) saveArtifactFile(a).then(
-                () => globalThis.toastr?.success('Diegetic: файл сохранён — открой его в браузере'),
-                () => globalThis.toastr?.error('Diegetic: файл не сохранился'),
+                () => globalThis.toastr?.success(tr('Diegetic: file saved — open it in your browser', 'diegetic.toast.savedFile')),
+                () => globalThis.toastr?.error(tr('Diegetic: file not saved', 'diegetic.toast.saveFailed')),
             );
             return;
         }
         if (e.target.closest('[data-dg-collapse]')) {
-            _expanded.delete(String(key).replace(/\|[oc]$/, ''));
+            _expanded.delete(baseKeyOfKey(key));
             reconcileMessage(msgId);
             return;
         }
@@ -818,7 +979,7 @@ function onDocumentClick(e) {
                 const a = artifactByKey(msgId, key);
                 if (a) openPopup(a, msgId);
             } else {
-                _expanded.add(String(key).replace(/\|[oc]$/, ''));
+                _expanded.add(baseKeyOfKey(key));
                 reconcileMessage(msgId);
             }
             return;
@@ -835,6 +996,9 @@ export function initRender(deps = {}) {
     // Отладочный хук (стенд): window.__diegetic.reconcile() вручную.
     try { globalThis.__diegetic = { reconcile, setGenerating, deps: () => _deps }; } catch { /* не критично */ }
     if (!_onMessage) {
+        let _hRafPending = false;
+        let _hRafFrame = null;
+        let _hRafValue = 0;
         _onMessage = (e) => {
             const h = e?.data?.__dgH;
             if (typeof h === 'number') {
@@ -847,8 +1011,35 @@ export function initRender(deps = {}) {
                     return;
                 }
                 for (const f of document.querySelectorAll(`iframe.${FRAME_CLASS}`)) {
-                    if (f.contentWindow === e.source) { f.dataset.dgHSeen = '1'; f.style.height = `${clampH(h)}px`; break; }
+                    if (f.contentWindow === e.source) {
+                        f.dataset.dgHSeen = '1';
+                        const shellKeyAttr = f.closest(`[${SHELL_ATTR}]`)?.getAttribute(SHELL_ATTR);
+                        if (shellKeyAttr) _heightCache.set(shellKeyAttr, clampH(h));
+                        // Б18: флуд {__dgH} (1044 сооб./2 c в прогоне) на каждое
+                        // сообщение ставил style.height = сотни layout/с.
+                        // Применяем ПОСЛЕДНЮЮ высоту не чаще кадра.
+                        if (typeof requestAnimationFrame === 'function') {
+                            _hRafValue = clampH(h);
+                            _hRafFrame = f;
+                            if (_hRafPending) return;
+                            _hRafPending = true;
+                            requestAnimationFrame(() => {
+                                _hRafPending = false;
+                                if (_hRafFrame?.isConnected) _hRafFrame.style.height = `${_hRafValue}px`;
+                            });
+                        } else {
+                            f.style.height = `${clampH(h)}px`;
+                        }
+                        break;
+                    }
                 }
+                return;
+            }
+            if (e?.data?.__dgEsc) {
+                // Esc из артефакта (Б1): закрыть наш оверлей, если он открыт;
+                // иначе Esc — дело самого артефакта, не мешаем.
+                if (_popup) closePopup();
+                else if (_editor) closeEditor();
                 return;
             }
             if (e?.data?.__dgCmd !== undefined) handleSlotCmd(e);
@@ -879,6 +1070,8 @@ export function shutdownRender() {
     if (_retryId) { clearInterval(_retryId); _retryId = null; }
     if (_observer) { try { _observer.disconnect(); } catch { /* уже снят */ } _observer = null; }
     if (_debounceId) { clearTimeout(_debounceId); _debounceId = null; }
+    if (_lazyIO) { try { _lazyIO.disconnect(); } catch { /* ок */ } _lazyIO = null; }
+    _heightCache.clear();
     if (_onMessage && typeof window !== 'undefined') {
         window.removeEventListener('message', _onMessage);
         _onMessage = null;

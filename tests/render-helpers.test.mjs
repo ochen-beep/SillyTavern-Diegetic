@@ -4,22 +4,39 @@
 // под ним оставалась пустая область.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { normalizeIntrinsicHeight, ensureMsgButtons, initRender, shutdownRender, withSlotControls, withImmersiveCss } from '../src/render.js';
 
-test('withImmersiveCss: документ с <head> — CSS после <head>', () => {
+const renderSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'render.js'), 'utf8');
+
+test('withImmersiveCss: документ с <head> — CSP-мета и CSS сразу после <head>', () => {
     const out = withImmersiveCss('<html><head><title>t</title></head><body></body></html>');
-    assert.ok(/<head><style>/.test(out));
+    assert.ok(/<head><meta http-equiv="Content-Security-Policy"[^>]*><style>/.test(out));
 });
 
-test('withImmersiveCss: без <head>, но с <html> — head синтезируется', () => {
+test('withImmersiveCss: без <head>, но с <html> — head синтезируется с CSP', () => {
     const out = withImmersiveCss('<html lang="ru"><body>x</body></html>');
-    assert.ok(/<html lang="ru"><head><style>/.test(out));
+    assert.ok(/<html lang="ru"><head><meta http-equiv="Content-Security-Policy"[^>]*><style>/.test(out));
 });
 
-test('withImmersiveCss: фрагмент без html/head — CSS в начало (регрессия: раньше терялся)', () => {
+test('withImmersiveCss: фрагмент без html/head — CSP-мета и CSS в начало (регрессия: раньше терялся)', () => {
     const out = withImmersiveCss('<div class="scene">x</div>');
-    assert.ok(out.startsWith('<style>'), 'иммерсивный CSS вставлен');
+    assert.ok(out.startsWith('<meta http-equiv="Content-Security-Policy"'), 'CSP-мета первой — в синтезированном head она обязана быть');
+    assert.ok(out.includes('<style>'), 'иммерсивный CSS вставлен');
     assert.ok(out.includes('<div class="scene">'), 'контент сохранён');
+});
+
+test('withImmersiveCss: CSP закрывает сеть, но оставляет inline и шрифты Google (Б17)', () => {
+    const out = withImmersiveCss('<p>x</p>');
+    const csp = /content="([^"]+)"/.exec(out)?.[1] ?? '';
+    assert.ok(csp.includes('connect-src data: blob:'), 'fetch/XHR наружу запрещён (только data:/blob:)');
+    assert.ok(csp.includes("frame-src 'none'"), 'вложенные фреймы запрещены');
+    assert.ok(csp.includes("object-src 'none'"), 'плагинные объекты запрещены');
+    assert.ok(csp.includes("base-uri 'none'"), 'базовая подмена URI запрещена');
+    assert.ok(csp.includes("script-src 'unsafe-inline'"), 'inline-скрипты артефакта живы');
+    assert.ok(csp.includes('https://fonts.googleapis.com'), 'шрифты шаблона universal.md не сломаны');
 });
 
 test('normalizeIntrinsicHeight: vh-ловушки высоты срезаются в auto', () => {
@@ -204,4 +221,56 @@ test('resolveMountBlock: межабзацный якорь — фолбэк в �
 test('resolveMountBlock: пустой/невалидный якорь — фолбэк в конец поста', () => {
     assert.equal(resolveMountBlock(blocks, { anchor: '  ' }, textEl), textEl);
     assert.equal(resolveMountBlock(blocks, { anchor: 'такого текста в посте нет вовсе' }, textEl), textEl);
+});
+
+test('Б1: CMD_SNIPPET слушает Esc внутри артефакта и шлёт __dgEsc родителю', () => {
+    const m = renderSrc.match(/const CMD_SNIPPET = ('[\s\S]*?' \+ 'script>';)/);
+    assert.ok(m, 'CMD_SNIPPET найден');
+    const snippet = eval(m[1]);
+    assert.ok(snippet.includes('"keydown"'), 'keydown-слушатель в сниппете');
+    assert.ok(snippet.includes('__dgEsc'), 'сообщение __dgEsc уходит родителю');
+    assert.ok(renderSrc.includes('__dgEsc'), 'родитель обрабатывает __dgEsc');
+    assert.ok(renderSrc.includes('_returnFocus'), 'возврат фокуса после закрытия лайтбокса');
+});
+
+test('Б28: watchdog — 4 c и не более одной перезагрузки на монтаж', () => {
+    assert.ok(renderSrc.includes(', 4000)'), 'порог поднят с 2.5 c');
+    assert.ok(renderSrc.includes('dgReloaded'), 'флаг однократной перезагрузки');
+});
+
+test('Б34/Б18/Б38/Б2/Б3/Б14: source-ассерты фиксов волны P1', () => {
+    // Ленивые iframe: плейсхолдер + IntersectionObserver + ключ с ленью
+    assert.ok(renderSrc.includes('.dg-lazy'), 'плейсхолдер .dg-lazy');
+    assert.ok(renderSrc.includes('IntersectionObserver'), 'ленивый обсервер');
+    assert.ok(/shellKey = [^;]*lazyActive/.test(renderSrc), 'ключ оболочки учитывает лень');
+    assert.ok(renderSrc.includes('_heightCache.clear()'), 'кэш высот чистится при смене чата');
+    // Б18: высота применяется не чаще кадра
+    assert.ok(renderSrc.includes('requestAnimationFrame'), 'rAF-троттлинг высоты');
+    // Б38: orphan-метка на чипе
+    assert.ok(renderSrc.includes("' ⚠'"), 'orphan-метка на чипе');
+    // Б2: share-фолбэк перед a[download]
+    assert.ok(renderSrc.includes('navigator.share'), 'iOS share-путь');
+    // Б14: visualViewport у contain-лайтбокса
+    assert.ok(/visualViewport\?\.addEventListener/.test(renderSrc), 'visualViewport-пересчёт contain');
+    // Б39: reduced motion внутри артефактов
+    assert.ok(renderSrc.includes('prefers-reduced-motion'), 'reduced-motion в IMMERSIVE_CSS');
+});
+
+test('Б19: fuzzy отключается на сверхдлинных текстах, exact живёт', async () => {
+    const { findFuzzySpan, findAnchorInText } = await import('../src/anchor.js');
+    const huge = 'слово '.repeat(60_000) + 'цельная фраза для поиска'; // > 200K символов
+    assert.equal(findFuzzySpan(huge, 'целная фраза'), null, 'fuzzy заглушен бюджетом');
+    assert.ok(findAnchorInText(huge, 'цельная фраза'), 'exact работает на любом объёме');
+    const small = 'она взяла телефон и вышла';
+    assert.ok(findFuzzySpan(small, 'взяла телифон'), 'на обычных текстах fuzzy жив');
+});
+
+test('Б34-регресс: baseKeyOfKey отрезает и старый, и ленивый хвост ключа', async () => {
+    const { baseKeyOfKey } = await import('../src/render.js');
+    assert.equal(baseKeyOfKey('abc12:0|deadbeef|o'), 'abc12:0|deadbeef', 'старый формат без ленивости');
+    assert.equal(baseKeyOfKey('abc12:0|deadbeef|o|l'), 'abc12:0|deadbeef', 'ленивый мобильный ключ');
+    assert.equal(baseKeyOfKey('abc12:0|deadbeef|c|e'), 'abc12:0|deadbeef', 'десктопный свёрнутый');
+    assert.equal(baseKeyOfKey(null), '', 'мусорный вход не падает');
+    // в onDocumentClick больше нет регекс-обрезки (она и ломала expand на мобиле)
+    assert.ok(!renderSrc.includes('_expanded.add(String(key)') && !renderSrc.includes('_expanded.delete(String(key)'), 'обрезка идёт через baseKeyOfKey, а не регекс');
 });

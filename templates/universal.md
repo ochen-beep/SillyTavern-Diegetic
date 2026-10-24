@@ -13,6 +13,7 @@ Build a single self-contained, skeuomorphic HTML/CSS/JS artifact representing a 
 - Mandatory: ≥1 stateful mechanic (unlock, flip, type, tune, peel, scratch, slide, rotate dials) with physical `:active` press feedback and ambient life.
 - Browser APIs (use when fitting): `<canvas>` (scratch-off layers, live oscilloscopes, handwriting), mouse-tracking CSS masks (UV light / magnifier reveals).
 - Procedural Audio: synthesize subtle diegetic SFX on interaction via pure `Web Audio API` (`AudioContext` mechanical clicks, beeps, static hiss, paper rustle — no external URLs).
+- SANDBOX REALITY: the artifact runs in a sandboxed iframe — opaque origin, NO network access (fetch/WebSocket/external images fail), NO storage APIs (`localStorage`/`sessionStorage`/`indexedDB` throw SecurityError), no parent window access; `alert`/`confirm`/`prompt`/form submission/popups/downloads are unavailable. Keep all state in JS variables and the DOM. Google Fonts `@import` is the only allowed external resource.
 </INTERACTION & NATIVE APIS>
 
 <GEOMETRY & BOUNDING BOX>

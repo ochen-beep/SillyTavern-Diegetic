@@ -15,7 +15,7 @@ test('источник current не существует: generateRaw не вы�
     try {
         await assert.rejects(
             generateText({ system: 'S', user: 'U', profile: { source: 'current' } }),
-            /Connection Manager недоступен/,
+            /Connection Manager unavailable/,
         );
         assert.equal(rawCalled, false);
     } finally { delete globalThis.SillyTavern; }
@@ -31,7 +31,7 @@ test('источник profile без выбранного профиля — я
     try {
         await assert.rejects(
             generateText({ system: 'S', user: 'U', profile: { source: 'profile', sourceConfig: {} } }),
-            /не выбран профиль подключения/,
+            /No connection profile selected/,
         );
     } finally { delete globalThis.SillyTavern; }
 });
@@ -129,7 +129,7 @@ test('custom: таймаут 5 мин — не AbortError пользовател
                 system: 'S', user: 'U',
                 profile: { source: 'custom', sourceConfig: { apiurl: 'http://127.0.0.1:9/v1' } },
             }),
-            /таймаут 5 мин/,
+            /5 min timeout/,
         );
         assert.equal(aborted, true);
     } finally {

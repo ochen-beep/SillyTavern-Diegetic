@@ -17,6 +17,8 @@ import {
     injectSlotImage, replaceSlotImage, generateSlotImage, getUrisBridge,
     setSlotPrompt, slotCardId,
 } from './images.js';
+import { stashForUndo } from './undo.js';
+import { tr } from './i18n.js';
 
 const byteLength = (s) => new TextEncoder().encode(s).length;
 
@@ -41,6 +43,9 @@ export function createPipeline(deps) {
         if (!s.enabled && !force) return;
         const msg = deps.getMessage(messageId);
         if (!msg || msg.is_user || msg.is_system) return;
+        // Скрытый пост без force не генерим (см. onMessageReceived); force —
+        // явный клик пользователя, ему разрешаем.
+        if (!force && msg.is_hidden) return;
         const swipeIdx = msg.swipe_id ?? 0;
         const prose = variantText(msg, swipeIdx);
         if (!isViableMessageText(prose)) return;
@@ -75,7 +80,11 @@ export function createPipeline(deps) {
             try {
                 raw = await deps.generateText({ system, user, profile, signal: run.ctrl.signal });
             } catch (e) {
-                if (e?.name !== 'AbortError') notify.error(`Diegetic: генерация не удалась (${e?.message || e})`);
+                if (e?.name !== 'AbortError') {
+                    // Б37: «Повторить» прямо из тоста ошибки.
+                    notify.error(tr('Diegetic: generation failed ({error})', 'diegetic.toast.genFailed').replace('{error}', e?.message || e),
+                        deps.retry ? { timeOut: 10_000, onclick: () => deps.retry(messageId) } : undefined);
+                }
                 return;
             }
             if (run.canceled) {
@@ -88,13 +97,17 @@ export function createPipeline(deps) {
             const parsed = parseDiegeticResponse(raw);
             if (parsed.artifacts.length === 0) {
                 // Контракт запрещает отказ, так что это именно сбой модели.
-                notify.error(`Diegetic: модель не вернула артефакт (${parsed.errors[0] || 'нет пар комментарий+fence'})`);
+                // Б37: «Повторить» из тоста — как и у сетевых ошибок.
+                notify.error(parsed.errors[0]
+                        ? tr('Diegetic: model returned no artifact ({error})', 'diegetic.toast.noArtifact').replace('{error}', parsed.errors[0])
+                        : tr('Diegetic: model returned no artifact (no comment+fence pair)', 'diegetic.toast.noArtifactPlain'),
+                    deps.retry ? { timeOut: 10_000, onclick: () => deps.retry(messageId) } : undefined);
                 return;
             }
             // Часть пар не распарсилась — скажем, а не выкинем молча: по тосту
             // видно, почему при «3 артефакта» в посте оказался один.
             if (parsed.errors.length > 0) {
-                notify.error(`Diegetic: отброшено ${parsed.errors.length} из ответа (${parsed.errors.join('; ')})`);
+                notify.error(tr('Diegetic: discarded {n} from the reply ({errors})', 'diegetic.toast.discarded').replace('{n}', parsed.errors.length).replace('{errors}', parsed.errors.join('; ')));
             }
 
             // Якорная валидация против сырой прозы (и прозы со срезанным markdown:
@@ -114,11 +127,16 @@ export function createPipeline(deps) {
             };
             const recorded = parsed.artifacts.map((art, i) => {
                 const { status } = matchAnchor(art.anchor);
+                const bytes = byteLength(art.html);
+                // Б20: огромный артефакт — предупреждение (b64-файл хранилища
+                // растёт вдвое от размера HTML), но не отбраковка: ответ оплачен.
+                if (bytes > 500_000) console.warn('[Diegetic] артефакт очень большой:', bytes, 'байт');
                 return {
                     id: `${proseDigest}:${i}`, type: art.type, anchor: art.anchor, status,
-                    html: art.html, bytes: byteLength(art.html), createdAt: Date.now(), profileId: profile.id,
+                    html: art.html, bytes, createdAt: Date.now(), profileId: profile.id,
                 };
             });
+            const oversized = recorded.filter(a => a.bytes > 500_000).length;
 
             // Commit: пост ищем по dg_id — индексы чата сдвигаются (удаление
             // соседа). Ответ оплачен и не выбрасывается: если текст слота уехал
@@ -147,18 +165,34 @@ export function createPipeline(deps) {
                 console.info('[Diegetic] ответ не записан: слот недоступен для записи');
                 return;
             }
+            // Перезапись существующего payload'а — обратима в течение окна (Б24):
+            // прежние артефакты прячутся, тост успеха получает «Отменить».
+            const undo = existing ? stashForUndo(live, swipeIdx, existing) : null;
             await deps.persistChat();
             deps.notifyRender?.(messageId);
 
             const drifted = liveDigest !== proseDigest;
             const orphans = recorded.filter(a => a.status === 'orphan').length;
             const over = recorded.length > s.maxPerMessage
-                ? ` (модель вернула ${recorded.length} при запросе ${s.maxPerMessage})` : '';
+                ? tr(' (model returned {n} when {m} were requested)', 'diegetic.toast.overCount').replace('{n}', recorded.length).replace('{m}', s.maxPerMessage) : '';
             const notes = [];
-            if (drifted) notes.push('пост изменился за время генерации — якоря перепривязаны');
-            if (orphans > 0) notes.push(`${orphans} в конец поста — якорь не найден`);
+            if (drifted) notes.push(tr('the post changed during generation — anchors rebound', 'diegetic.toast.noteDrifted'));
+            if (orphans > 0) notes.push(tr('{n} moved to the end of the post — anchor not found', 'diegetic.toast.noteOrphan').replace('{n}', orphans));
+            if (oversized > 0) notes.push(tr('{n} huge — storage will grow', 'diegetic.toast.noteOversized').replace('{n}', oversized));
             console.info(`[Diegetic] записано артефакт(ов): ${recorded.length}${drifted ? ' (спасены: текст уехал за время генерации)' : ''}`);
-            notify.ready(`Diegetic: артефакт(ов): ${recorded.length}${over}${notes.length ? ' — ' + notes.join(', ') : ''}`);
+            notify.ready(tr('Diegetic: artifacts: {n}', 'diegetic.toast.recorded').replace('{n}', recorded.length) + over + (notes.length ? ' — ' + notes.join(', ') : ''),
+                undo
+                    ? {
+                        timeOut: 10_000,
+                        onclick: () => {
+                            if (undo()) {
+                                void deps.persistChat?.();
+                                deps.notifyRender?.(messageId);
+                                notify.ready(tr('Diegetic: regeneration undone — previous artifacts restored', 'diegetic.toast.regenUndone'));
+                            }
+                        },
+                    }
+                    : undefined);
 
             if (s.imageMode === 'auto' && recorded.some(a => hasPendingSlots(a.html))) fillImageSlots(messageId);
         } finally {
@@ -243,8 +277,8 @@ export function createPipeline(deps) {
                     firstError = firstError || e;
                 }
             }
-            if (firstError) notify.error(`Diegetic: фото не сгенерировано (${firstError?.message || firstError})`);
-            else notify.ready('Diegetic: фото готово');
+            if (firstError) notify.error(tr('Diegetic: photo not generated ({error})', 'diegetic.toast.photoFailed').replace('{error}', firstError?.message || firstError));
+            else notify.ready(tr('Diegetic: photo ready', 'diegetic.toast.photoReady'));
         } finally {
             deps.coordinator.endRun(run);
         }
@@ -275,7 +309,7 @@ export function createPipeline(deps) {
         if (idx < 0) return;
         const nextHtml = setSlotPrompt(p.artifacts[idx].html, ordinal, { trigger, desc });
         if (nextHtml === null) {
-            notify.error('Diegetic: промпт фотослота пуст или слот не найден');
+            notify.error(tr('Diegetic: photo slot prompt is empty or slot not found', 'diegetic.toast.slotPromptEmpty'));
             return;
         }
         const artifacts = p.artifacts.slice();
@@ -293,15 +327,15 @@ export function createPipeline(deps) {
 
     // run() и fillImageSlots() никогда не реджектятся: обработчики событий fire-and-forget.
     const fillImageSlots = (messageId, opts = {}) =>
-        _fillImageSlots(messageId, opts).catch((e) => notify.error(`Diegetic: сбой фотослотов (${e?.message || e})`));
+        _fillImageSlots(messageId, opts).catch((e) => notify.error(tr('Diegetic: photo slots failure ({error})', 'diegetic.toast.photoCrash').replace('{error}', e?.message || e)));
 
     return {
         run: (messageId, opts = {}) =>
-            _run(messageId, opts).catch((e) => notify.error(`Diegetic: сбой (${e?.message || e})`)),
+            _run(messageId, opts).catch((e) => notify.error(tr('Diegetic: failure ({error})', 'diegetic.toast.genCrash').replace('{error}', e?.message || e))),
         fillImageSlots,
         updateSlotPrompt: (messageId, artifactId, ordinal, opts = {}) =>
             _updateSlotPrompt(messageId, artifactId, ordinal, opts)
-                .catch((e) => notify.error(`Diegetic: сбой промпта слота (${e?.message || e})`)),
+                .catch((e) => notify.error(tr('Diegetic: slot prompt failure ({error})', 'diegetic.toast.slotPromptCrash').replace('{error}', e?.message || e))),
         hasPendingPhotoSlots,
     };
 }

@@ -108,7 +108,7 @@ test('якорь не найден: артефакт записан со ста�
     await createPipeline(deps).run(0);
     const p = readRawPayload(msg, 0);
     assert.equal(p.artifacts[0].status, 'orphan');
-    assert.ok(notifications.some(([k, m]) => k === 'ready' && /в конец поста/.test(String(m))));
+    assert.ok(notifications.some(([k, m]) => k === 'ready' && /moved to the end of the post/.test(String(m))));
 });
 
 test('выключено настройкой: выход; force: генерация работает', async () => {
@@ -157,7 +157,7 @@ test('частичный отсев: валидная пара записана,
     assert.ok(p, 'валидный артефакт записан');
     assert.equal(p.artifacts.length, 1);
     assert.ok(
-        notifications.some(([k, m]) => k === 'error' && /отброшено 1/.test(String(m))),
+        notifications.some(([k, m]) => k === 'error' && /discarded 1/.test(String(m))),
         'частичный отсев озвучен тостом',
     );
 });
@@ -308,7 +308,7 @@ test('пост изменился за время генерации: payload с
     assert.ok(raw, 'оплаченный ответ не выбрасывается');
     assert.equal(raw.contentDigest, contentDigest(PROSE), 'штамп — исходный текст');
     assert.equal(readVerifiedPayload(msg, 0), null, 'для нового текста он stale — усыновит rebind');
-    assert.ok(notifications.some(([k, m]) => k === 'ready' && /пост изменился/.test(String(m))));
+    assert.ok(notifications.some(([k, m]) => k === 'ready' && /anchors rebound/.test(String(m))));
 });
 
 test('свайп во время генерации: ответ спасается в СВОЙ слот, чужой не тронут', async () => {

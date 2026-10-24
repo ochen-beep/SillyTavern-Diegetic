@@ -1,14 +1,16 @@
+import { tr } from './i18n.js';
+
 // Политика кастомного эндпоинта: без учётных данных в URL, https или
 // loopback; plain-HTTP вне localhost — только по явному allowlist-origin.
 // Чистые функции; confirm-UI живёт у вызывающего (index.js).
 
 export function classifyEndpoint(raw) {
     const input = String(raw ?? '').trim();
-    if (!input) return { ok: false, error: 'URL эндпоинта пустой.' };
+    if (!input) return { ok: false, error: tr('Endpoint URL is empty.', 'diegetic.policy.urlEmpty') };
     let parsed;
-    try { parsed = new URL(input); } catch { return { ok: false, error: `Некорректный URL: «${input}».` }; }
-    if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, error: 'Поддерживаются только http:// и https://.' };
-    if (parsed.username || parsed.password) return { ok: false, error: 'URL не должен содержать логин/пароль — ключ передавай полем «Ключ».' };
+    try { parsed = new URL(input); } catch { return { ok: false, error: tr('Invalid URL: «{input}».', 'diegetic.policy.urlInvalid').replace('{input}', input) }; };
+    if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, error: tr('Only http:// and https:// are supported.', 'diegetic.policy.scheme') };
+    if (parsed.username || parsed.password) return { ok: false, error: tr('The URL must not contain login/password — pass the key in the «API key» field.', 'diegetic.policy.credentials') };
     const hostname = parsed.hostname.toLowerCase();
     const loopback = hostname === 'localhost' || hostname === '::1' || hostname === '[::1]'
         || hostname === '0.0.0.0' || /^127\.\d+\.\d+\.\d+$/.test(hostname);

@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     imageQuality: 'medium',    // 'low' | 'medium' | 'high' — quality для URIS generate()
     displayMode: 'inline',     // 'inline' | 'expand' | 'popup' — как артефакт показан в посте
     buttonMode: 'post',        // 'post' | 'bar' | 'floating' — где кнопка генерации
+    lazyFrames: 'auto',        // 'auto' (мобильный профиль) | 'on' | 'off' — артефакты вне экрана выключаются (Б34)
     ctxHistory: true,          // блок истории чата в контексте (глубина — contextDepth)
     ctxPersona: true,          // персона {{user}} в контексте генерации
     ctxCharacter: true,        // описание персонажа в контексте
@@ -29,6 +30,7 @@ const IMAGE_MODES = new Set(['off', 'button', 'auto']);
 const IMAGE_QUALITIES = new Set(['low', 'medium', 'high']);
 const DISPLAY_MODES = new Set(['inline', 'expand', 'popup']);
 const BUTTON_MODES = new Set(['post', 'bar', 'floating']);
+const LAZY_FRAMES = new Set(['auto', 'on', 'off']);
 // «Мусор — дефолты»: нечисловое или выходящее за [lo, hi] значение даёт дефолт, а не границу диапазона.
 const bounded = (v, lo, hi, dflt) => {
     const n = Math.round(Number(v));
@@ -77,13 +79,18 @@ const legacySourceFromProfiles = (raw) => {
     };
 };
 
+// Ключи, которые нельзя отдавать обычному присваиванию в plain object:
+// '__proto__'/'constructor' из settings.json приводят к прото-загрязнению
+// или молчаливой потере записи (Б21).
+const UNSAFE_TEMPLATE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 const sanitizeTemplates = (t) => {
     if (!t || typeof t !== 'object' || Array.isArray(t)) return {};
     const out = {};
     for (const [k, v] of Object.entries(t)) {
         // Ключи-имена: непустая строка, не занятая встроенной основой
         // (встроенные не из хранилища — записи под их именами недостижимы).
-        if (typeof k === 'string' && k && !isBuiltinName(k) && typeof v === 'string') out[k] = v;
+        if (typeof k === 'string' && k && !isBuiltinName(k) && !UNSAFE_TEMPLATE_KEYS.has(k) && typeof v === 'string') out[k] = v;
     }
     return out;
 };
@@ -111,6 +118,7 @@ export function normalizeSettings(input) {
         imageQuality: IMAGE_QUALITIES.has(raw.imageQuality) ? raw.imageQuality : DEFAULT_SETTINGS.imageQuality,
         displayMode: DISPLAY_MODES.has(raw.displayMode) ? raw.displayMode : DEFAULT_SETTINGS.displayMode,
         buttonMode: BUTTON_MODES.has(raw.buttonMode) ? raw.buttonMode : DEFAULT_SETTINGS.buttonMode,
+        lazyFrames: LAZY_FRAMES.has(raw.lazyFrames) ? raw.lazyFrames : DEFAULT_SETTINGS.lazyFrames,
         ctxHistory: raw.ctxHistory === false ? false : true,
         ctxPersona: raw.ctxPersona === false ? false : true,
         ctxCharacter: raw.ctxCharacter === false ? false : true,

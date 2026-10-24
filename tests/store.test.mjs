@@ -11,14 +11,15 @@ const keyOf = (msg, idx = 0) => `${dgMessageId(msg, { create: true })}:${idx}`;
 
 let savedMeta = 0;
 function mockCtx(chat, storeId = 'test-store') {
-    globalThis.SillyTavern = {
-        getContext: () => ({
-            chat,
-            chatMetadata: { dg: { storeId } },
-            saveMetadataDebounced: () => { savedMeta++; },
-            getRequestHeaders: () => ({}),
-        }),
+    // Живой объект контекста (как в реальном ST): мутации chatMetadata из
+    // detachStore и пр. обязаны быть видны через повторный getContext().
+    const ctx = {
+        chat,
+        chatMetadata: { dg: { storeId } },
+        saveMetadataDebounced: () => { savedMeta++; },
+        getRequestHeaders: () => ({}),
     };
+    globalThis.SillyTavern = { getContext: () => ctx };
 }
 
 beforeEach(() => { savedMeta = 0; _testSetEntries({}); });
@@ -92,7 +93,7 @@ test('loadStore мержит серверный снимок с записями
     // delete globalThis.fetch снёс бы встроенный fetch Node навсегда —
     // последующие тесты получили бы sync-ReferenceError вместо отказа сети.
     const realFetch = globalThis.fetch;
-    globalThis.fetch = async () => ({ ok: true, json: async () => doc });
+    globalThis.fetch = async () => ({ ok: true, text: async () => JSON.stringify(doc) });
     try {
         _testSetEntries(null);
         mockCtx([{ mes: 't', send_date: 'd0' }]);
@@ -113,7 +114,7 @@ test('upload снимает имя и тело в момент постанов�
             uploads.push([raw.name, JSON.parse(Buffer.from(raw.data, 'base64').toString())]);
             return { ok: true };
         }
-        return { ok: true, json: async () => null };
+        return { ok: true, text: async () => 'not json at all' };
     };
     try {
         _testSetEntries({});
@@ -140,4 +141,60 @@ test('deleteEntry остаётся рабочим для clearPayload-пути',
     _testSetEntries({ k: P('x') });
     deleteEntry('k');
     assert.equal(readEntry('k'), null);
+});
+
+// ── Б25/Б26/Б27/Б20: инструментарий хранилища ──
+import { pruneEntries, detachStore, mergeEntries, storeStatus, retryWrite } from '../src/store.js';
+
+test('Б27: pruneEntries сносит сирот, живые ключи не трогает', () => {
+    _testSetEntries({ 'live:0': P('a'), 'dead:1': P('b'), 'dead:2': P('c') });
+    const removed = pruneEntries(new Set(['live:0']));
+    assert.equal(removed, 2);
+    assert.equal(readEntry('live:0').contentDigest, 'a');
+    assert.equal(readEntry('dead:1'), null);
+    assert.equal(storeStatus().ok, true, 'после записи ошибки нет');
+});
+
+test('Б27: pruneEntries без зеркала или с мусором — 0, без падений', () => {
+    _testSetEntries(null);
+    assert.equal(pruneEntries(new Set(['x'])), 0);
+    _testSetEntries({ a: P('a') });
+    assert.equal(pruneEntries('мусор'), 0);
+});
+
+test('Б26: detachStore — новый storeId, записи копируются, метаданные сохраняются', () => {
+    savedMeta = 0;
+    _testSetEntries({ 'm1:0': P('a') });
+    mockCtx([{ mes: 't' }], 'old-store');
+    assert.equal(detachStore(), true);
+    assert.notEqual(globalThis.SillyTavern.getContext().chatMetadata.dg.storeId, 'old-store');
+    assert.equal(readEntry('m1:0').contentDigest, 'a', 'записи переехали в новое зеркало');
+    assert.ok(savedMeta > 0, 'метаданные сохранены');
+});
+
+test('Б25: mergeEntries — новые добавляются, по generatedAt выигрывает свежее', () => {
+    _testSetEntries({
+        'k1': P('old1'),
+        'k2': { schema: 1, contentDigest: 'cur2', generatedAt: 100, artifacts: [] },
+    });
+    const res = mergeEntries({
+        'k1': { schema: 1, contentDigest: 'new1', generatedAt: 200, artifacts: [] },
+        'k2': { schema: 1, contentDigest: 'stale2', generatedAt: 50, artifacts: [] },
+        'k3': { schema: 1, contentDigest: 'add3', generatedAt: 1, artifacts: [] },
+        'bad': { мусор: true },
+    });
+    assert.deepEqual(res, { added: 1, updated: 1 });
+    assert.equal(readEntry('k1').contentDigest, 'new1', 'входящее свежее — заменило');
+    assert.equal(readEntry('k2').contentDigest, 'cur2', 'текущее свежее — сохранено');
+    assert.equal(readEntry('k3').contentDigest, 'add3');
+    assert.equal(readEntry('bad'), null);
+    _testSetEntries(null);
+    assert.deepEqual(mergeEntries({ k: P('x') }), { added: 0, updated: 0 }, 'без зеркала — no-op');
+});
+
+test('Б20: storeStatus отражает последнюю ошибку записи, retryWrite не падает', () => {
+    _testSetEntries({ k: P('a') });
+    assert.deepEqual(storeStatus(), { ok: true, error: null });
+    retryWrite();
+    assert.equal(storeStatus().ok, true);
 });

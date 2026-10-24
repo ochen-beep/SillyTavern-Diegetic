@@ -16,3 +16,6 @@ coverage/
 # Internal dev docs, not part of the distributed extension
 PROJECT_MAP.md
 docs/
+
+# QA stand (mock-endpoint), not part of the distributed extension
+.qa/

@@ -166,6 +166,11 @@ export function findFuzzySpan(text, anchor, { maxRatio = 0.25, maxWords = 12 } =
     const totalCap = Math.max(2, Math.floor(needle.length * maxRatio));
 
     const mapped = normalizedWithMap(text);
+    // Бюджет (Б19): скользящее окно Levenshtein по всем словам — O(позиции ×
+    // слова якоря). На постах 100K+ символов это джанк главного потока при
+    // каждом rebind. На сверхдлинных текстах fuzzy отключаем: exact-путь
+    // (indexOf по нормализованному тексту) остаётся быстрым и непререкаемым.
+    if (mapped.source.length > 200_000) return null;
     const sourceWords = tokenizeWords(mapped.normalized);
     let best = null;
     for (let p = 0; p + needleWords.length <= sourceWords.length; p++) {

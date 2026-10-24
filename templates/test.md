@@ -73,7 +73,7 @@ Keep body transparent so the artifact sits in the conversation, unless the surro
 <IMPLEMENTATION AND VALIDATION>
 For a complex result, silently work in this order: choose the scene-specific form; define its central activity and state; implement interaction and finish/reset behavior; check the causal consequences and distinct outcomes; then add material polish, ambient behavior, typography, and sound. Never spend the output budget on decoration before the activity works. Return a complete document, not a truncated or half-built canvas.
 
-Return standalone HTML with inline CSS and JavaScript, usable inside a sandboxed iframe. Do not use JavaScript network requests, API keys, parent-window access, eval, or hidden external state. Remote fonts are optional only when the embedding environment allows them, and must have a close local fallback. External resources must not be necessary for the core experience.
+Return standalone HTML with inline CSS and JavaScript, usable inside a sandboxed iframe. Do not use JavaScript network requests, API keys, parent-window access, or hidden external state. Storage APIs (localStorage/sessionStorage/indexedDB) throw SecurityError in the sandbox — keep state in JS variables and the DOM. alert/confirm/prompt, form submission, popups and downloads are unavailable. Remote fonts are optional only when the embedding environment allows them, and must have a close local fallback. External resources must not be necessary for the core experience.
 
 Keep meaningful content in HTML so it remains readable if JavaScript fails. Support keyboard input where it naturally belongs. If nonessential continuous motion is present, provide a prefers-reduced-motion fallback that keeps the activity usable.
 

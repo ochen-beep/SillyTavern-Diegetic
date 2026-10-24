@@ -12,6 +12,10 @@ export const BUILTIN_TEMPLATES = Object.freeze({
 
 export const DEFAULT_TEMPLATE = 'universal';
 
+// Имена, которые нельзя отдавать вычисляемым ключом в plain object (Б21).
+const UNSAFE_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
+const safeName = (name) => !!name && !isBuiltinTemplate(name) && !UNSAFE_NAMES.has(String(name));
+
 export const isBuiltinTemplate = (name) => Object.hasOwn(BUILTIN_TEMPLATES, name);
 
 /** Хранилище пользовательских шаблонов настроек (всегда объект). */
@@ -36,22 +40,22 @@ export function templateContent(settings, name) {
     return Object.hasOwn(all, name) ? String(all[name] ?? '') : null; // null — имя висит (шаблона нет)
 }
 
-/** Перезаписать текст шаблона. Встроенные не перезаписываются → null. */
+/** Перезаписать текст шаблона. Встроенные и опасные имена не перезаписываются → null. */
 export function saveTemplate(settings, name, text) {
-    if (!name || isBuiltinTemplate(name)) return null;
+    if (!safeName(name)) return null;
     return { ...settings, templates: { ...userTemplates(settings), [name]: String(text ?? '') } };
 }
 
 /** Сохранить как новое имя и сразу выбрать его. */
 export function saveTemplateAs(settings, name, text) {
     const clean = String(name ?? '').trim();
-    if (!clean || isBuiltinTemplate(clean)) return null;
+    if (!safeName(clean)) return null;
     return { ...saveTemplate(settings, clean, text), activeTemplate: clean };
 }
 
 /** Удалить пользовательский шаблон; активное имя улетевшее — фолбэк на встроенный. */
 export function deleteTemplate(settings, name) {
-    if (!name || isBuiltinTemplate(name)) return null;
+    if (!safeName(name)) return null;
     const rest = { ...userTemplates(settings) };
     delete rest[name];
     const activeTemplate = settings.activeTemplate === name ? DEFAULT_TEMPLATE : settings.activeTemplate;

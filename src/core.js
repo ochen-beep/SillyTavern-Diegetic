@@ -44,14 +44,17 @@ export async function getApiKey(profileId) {
     try { return String(await store.getItem(`diegetic_key_${profileId}`) ?? ''); } catch { return ''; }
 }
 
+/** Сохранить/удалить ключ. true — операция прошла; false — хранилище недоступно
+ *  (приватный режим, квота): вызывающий обязан честно сказать об этом (Б16). */
 export async function setApiKey(profileId, key) {
     const store = lf();
-    if (!store || !profileId) return;
+    if (!store || !profileId) return false;
     try {
         const k = String(key ?? '');
         if (k) await store.setItem(`diegetic_key_${profileId}`, k);
         else await store.removeItem(`diegetic_key_${profileId}`);
-    } catch { /* ключ просто не сохранится */ }
+        return true;
+    } catch { return false; }
 }
 
 // Встроенные шаблоны: файлы расширения, отдаются хостом статикой.

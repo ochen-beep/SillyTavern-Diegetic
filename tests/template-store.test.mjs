@@ -65,3 +65,26 @@ test('selectTemplate: пустое/мусорное имя → дефолт', ()
     assert.equal(selectTemplate(base(), '').activeTemplate, 'universal');
     assert.equal(selectTemplate(base(), null).activeTemplate, 'universal');
 });
+
+test('Б21: опасные имена-ключи не проходят ни в запись, ни в удаление, ни в sanitize', () => {
+    for (const name of ['__proto__', 'constructor', 'prototype']) {
+        assert.equal(saveTemplate(base(), name, 'хак'), null, `saveTemplate отклоняет ${name}`);
+        assert.equal(saveTemplateAs(base(), name, 'хак'), null, `saveTemplateAs отклоняет ${name}`);
+        assert.equal(deleteTemplate(base(), name), null, `deleteTemplate отклоняет ${name}`);
+    }
+    // Не мутировали Object.prototype даже при попытке
+    assert.equal({}.pwned, undefined);
+});
+
+test('Б21: sanitizeTemplates в normalizeSettings вычищает опасные ключи из settings.json', async () => {
+    const { normalizeSettings } = await import('../src/settings.js');
+    const raw = { templates: {} };
+    // JSON.parse реального settings.json создаёт обычный объект: ключ "__proto__"
+    // в JSON тексте становится own-свойством — эмулируем через defineProperty.
+    Object.defineProperty(raw.templates, '__proto__', { value: 'хак', enumerable: true, configurable: true });
+    raw.templates['constructor'] = 'хак';
+    raw.templates['Легальный'] = 'ок';
+    const s = normalizeSettings(raw);
+    assert.deepEqual(Object.keys(s.templates), ['Легальный']);
+    assert.equal({}.хак, undefined);
+});

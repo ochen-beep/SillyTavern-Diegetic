@@ -22,11 +22,16 @@ import { createInitializationController } from './src/lifecycle.js';
 import { mountPanel, unmountUi, collectRows } from './src/ui.js';
 import { initRender, shutdownRender, reconcile, reconcileMessage, setGenerating, deleteArtifact, clearImageCache, openArtifactPopup, saveArtifactById } from './src/render.js';
 import { migrateCurrentChat, migrateSendDateKeys } from './src/migrate.js';
-import { loadStore, migrateExtraToStore, deleteStoreFile } from './src/store.js';
+import {
+    loadStore, migrateExtraToStore, deleteStoreFile,
+    pruneEntries, detachStore, mergeEntries, exportStoreFile,
+    storeStatus, retryWrite,
+} from './src/store.js';
 import { variantText, PAYLOAD_KEY, dgMessageId } from './src/payload.js';
 import { urisStatus } from './src/images.js';
 import { collectContext } from './src/context.js';
 import { stripReasoning } from './src/contract.js';
+import { tr } from './src/i18n.js';
 import { classifyEndpoint, isOriginAllowed, addToAllowList } from './src/endpoint-policy.js';
 
 const log = (...a) => console.log('[Diegetic]', ...a);
@@ -41,8 +46,21 @@ let boundEvents = [];
 
 const save = () => { saveSettings(settingsStorage, settings); };
 
-async function getContextBlock(messageId, depth) {
-    const ctx = getCtx();
+// Дескриптор источника для хоста: единственный профиль «source», собранный
+// из настроек (форма DS-Comments, без списка профилей). Общая для пайплайна
+// и «Проверить подключение» (Б36). extraBody примешивается к запросу и для
+// CM, и для custom — например, отключение reasoning у провайдера.
+const getSourceProfile = () => ({
+    id: 'source',
+    name: 'Источник',
+    source: settings.source,
+    sourceConfig: settings.source === 'custom'
+        ? { ...settings.custom, extraBody: settings.customExtraBody || '' }
+        : { ...settings.cmProfile, extraBody: settings.customExtraBody || '' },
+    httpAllowList: settings.httpAllowList,
+});
+
+async function getContextBlock(messageId, depth) {    const ctx = getCtx();
     const chat = getChat();
     // Форма DS-Comments: история чата — отдельный тумблер, глубина задаётся числом.
     const from = settings.ctxHistory ? Math.max(0, Number(messageId) - depth) : Number(messageId);
@@ -89,7 +107,7 @@ function cancelGen(id) {
     const dg = dgIdOf(id);
     if (!dg || !coordinator?.abortKind(dg, 'gen')) return false;
     busyEnd(); // кнопка гаснет сразу; размотка прогона учтёт счётчик корректно
-    globalThis.toastr?.info?.('Diegetic: генерация отменена');
+    globalThis.toastr?.info?.(tr('Diegetic: generation canceled', 'diegetic.toast.canceled'));
     return true;
 }
 
@@ -110,10 +128,11 @@ async function init(isCancelled = () => false) {
 
     const toastr = globalThis.toastr;
     const notify = {
-        ready: (m) => { if (settings.appearance !== 'silent') toastr?.success(m); },
-        // Потеря оплаченного ответа — не шум: warning показывается и в silent-режиме.
+        // opts — Toastr-опции (onclick undo/retry и т.п.); warning в silent-режиме
+        // показывается всегда: потеря оплаченного — не шум.
+        ready: (m, opts) => { if (settings.appearance !== 'silent') toastr?.success(m, 'Diegetic', opts); },
         warn: (m) => toastr?.warning(m),
-        error: (m) => toastr?.error(m),
+        error: (m, opts) => toastr?.error(m, 'Diegetic', opts),
     };
 
     pipeline = createPipeline({
@@ -130,20 +149,11 @@ async function init(isCancelled = () => false) {
         getContextBlock,
         get settings() { return settings; },
         coordinator,
-        // Дескриптор источника для хоста: единственный профиль «source»,
-        // собранный из настроек (форма DS-Comments, без списка профилей).
-        // extraBody примешивается к запросу и для CM, и для custom —
-        // например, отключение reasoning у провайдера.
-        getSourceProfile: () => ({
-            id: 'source',
-            name: 'Источник',
-            source: settings.source,
-            sourceConfig: settings.source === 'custom'
-                ? { ...settings.custom, extraBody: settings.customExtraBody || '' }
-                : { ...settings.cmProfile, extraBody: settings.customExtraBody || '' },
-            httpAllowList: settings.httpAllowList,
-        }),
         notifyRender: (id) => { reconcileMessage(id); panelApi?.refreshArtifacts?.(); },
+        // Б37: тост об ошибке генерации несёт «Повторить» — повтор не надо искать по постам.
+        retry: (id) => runBusy(id, { force: true }),
+        // Дескриптор источника — общая функция (используется и в testSource).
+        getSourceProfile,
         // Шаблон резолвится по activeTemplate: встроенная основа — fetch, своя —
         // из именованного хранилища настроек (форма DS-Comments).
         resolveTemplate: async () => {
@@ -201,10 +211,8 @@ async function init(isCancelled = () => false) {
             if (!ep.ok) return { ok: false, error: ep.error };
             if (ep.kind === 'insecure-http' && !isOriginAllowed(ep.origin, settings.httpAllowList)) {
                 const ok = await confirmDanger(
-                    `Разрешить незащищённый endpoint ${ep.origin}?\n\n` +
-                    'Plain-HTTP вне localhost передаёт ключ и тексты в открытом виде. ' +
-                    'Origin будет добавлен в список разрешённых (настройки расширения).');
-                if (!ok) return { ok: false, error: 'подтверждение не дано' };
+                    tr('Allow the insecure endpoint {origin}?\n\nPlain-HTTP outside localhost sends the key and texts in the clear. The origin will be added to the allowlist (extension settings).', 'diegetic.confirm.insecureHttp').replace('{origin}', ep.origin));
+                if (!ok) return { ok: false, error: tr('confirmation not given', 'diegetic.policy.confirmDenied') };
                 settings.httpAllowList = addToAllowList(ep.origin, settings.httpAllowList);
             }
             settings.custom = { apiurl: String(apiurl ?? '').trim(), model: String(model ?? '').trim() };
@@ -244,7 +252,7 @@ async function init(isCancelled = () => false) {
         // Лаунчер и панельные кнопки идут через runBusy — busy-анимация на всех.
         runLatest: () => {
             const id = getLatestAssistantId();
-            if (id === null) { toastr?.info?.('Diegetic: в чате нет поста ИИ'); return; }
+            if (id === null) { toastr?.info?.(tr('Diegetic: no AI post in this chat', 'diegetic.toast.noAiPost')); return; }
             if (!cancelGen(id)) runBusy(id, { force: true });
         },
         getExclusions: () => String(chatData()?.exclusions ?? ''),
@@ -252,14 +260,66 @@ async function init(isCancelled = () => false) {
             const d = chatData();
             if (d) { d.exclusions = String(text); saveChatData(); }
         },
-        setImageMode: (v) => { settings.imageMode = v; save(); },
+        setImageMode: (v) => { settings.imageMode = v; save(); reconcile(); },
         setImageQuality: (v) => { settings.imageQuality = v; save(); },
         setDisplayMode: (v) => { settings.displayMode = v; save(); reconcile(); },
+        getAppearance: () => settings.appearance,
+        setAppearance: (v) => { settings.appearance = v === 'silent' ? 'silent' : 'toast'; save(); },
         setButtonMode: (v) => {
             settings.buttonMode = v;
             save();
             reconcile(); // пересмотр кнопок в постах
             panelApi?.render(); // лаунчер перерисовывает ui.js по готовности
+        },
+        // Б34: ленивые фреймы. Ключ оболочки включает лень — reconcile честно
+        // перестраивает iframe ↔ плейсхолдер.
+        setLazyFrames: (v) => { settings.lazyFrames = ['auto', 'on', 'off'].includes(v) ? v : 'auto'; save(); reconcile(); },
+        // ── Хранилище (Б25/Б26/Б27/Б20) ──
+        gcStore: () => {
+            const live = new Set();
+            for (const msg of getChat()) {
+                if (!msg || typeof msg !== 'object') continue;
+                const id = dgMessageId(msg);
+                if (!id) continue;
+                const slots = Math.max(
+                    Array.isArray(msg.swipes) ? msg.swipes.length : 0,
+                    Array.isArray(msg.swipe_info) ? msg.swipe_info.length : 0,
+                    1,
+                );
+                for (let i = 0; i < slots; i++) live.add(`${id}:${i}`);
+            }
+            return pruneEntries(live);
+        },
+        detachStore,
+        exportArtifacts: exportStoreFile,
+        importArtifacts: async (jsonText) => {
+            let doc;
+            try { doc = JSON.parse(jsonText); } catch (e) { return { ok: false, error: `не JSON (${e?.message ?? e})` }; }
+            if (doc?.v !== 2 || !doc.entries || typeof doc.entries !== 'object') {
+                return { ok: false, error: 'это не файл хранилища Diegetic (ожидался v:2)' };
+            }
+            const res = mergeEntries(doc.entries);
+            reconcile();
+            return { ok: true, ...res };
+        },
+        storeStatus,
+        retryStore: retryWrite,
+        // Б36: сухой запрос к источнику — «Проверить подключение» до первого поста.
+        testSource: async () => {
+            try {
+                const profile = getSourceProfile();
+                const text = await generateText({
+                    system: 'You are a connection test. Reply with exactly: OK',
+                    user: 'Reply with exactly: OK',
+                    profile,
+                    signal: undefined,
+                });
+                return typeof text === 'string' && text.trim().length > 0
+                    ? { ok: true, error: null }
+                    : { ok: false, empty: true, error: null };
+            } catch (e) {
+                return { ok: false, error: e?.message || String(e) };
+            }
         },
         setMaxPerMessage: (v) => { settings.maxPerMessage = Number(v); save(); },
         setCtxHistory: (v) => { settings.ctxHistory = !!v; save(); },
@@ -316,6 +376,16 @@ async function init(isCancelled = () => false) {
     bindEvents(ctx);
     if (isCancelled()) return;
 
+    // Б4: bar-режим без Quick Reply — через 3 c после init QR-хоста нет:
+    // вернуть ◆ к постам (runtime-флаг читает ensureMsgButtons) и сказать раз.
+    setTimeout(() => {
+        if (isCancelled()) return;
+        if (settings.buttonMode !== 'bar' || document.getElementById('dg-launcher-bar')) return;
+        settings.barFallback = true; // runtime-only: normalizeSettings его не сериализует
+        reconcile();
+        globalThis.toastr?.info(tr('Diegetic: quick bar not found — generate buttons kept on posts', 'diegetic.toast.qrMissing'));
+    }, 3000);
+
     // Текущий чат: миграция legacy-фенсов → загрузка хранилища → перенос
     // extra-эпохи и send_date-ключей в файл → reconcile.
     prepareChat().catch((e) => warn('миграция:', e));
@@ -346,6 +416,9 @@ function onMessageReceived(id, type) {
     if (SKIP_AUTOGEN_TYPES.has(type)) return;
     try {
         const msg = getMessage(id);
+        // Скрытый пост (/hide) не виден в контексте — генерация по нему только
+        // тратила деньги; force-кнопкой пользователь всё ещё может явно попросить.
+        if (msg?.is_hidden) return;
         const prose = msg ? variantText(msg, msg.swipe_id ?? 0) : '';
         const phrases = String(chatData()?.exclusions ?? '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
         if (isExcluded(prose, phrases)) return;
@@ -358,8 +431,17 @@ function bindEvents(ctx) {
     const pairs = [
         [t.MESSAGE_RECEIVED, onMessageReceived],
         // Ключ инваллидации — dg_id (совпадает с ключом прогона координатора).
-        [t.MESSAGE_SWIPED, (id) => { const dg = dgIdOf(id); if (dg) coordinator?.bumpMessageRevision(dg); }],
-        [t.MESSAGE_EDITED, (id) => { const dg = dgIdOf(id); if (dg) coordinator?.bumpMessageRevision(dg); }],
+        // Б31: правка/свайп меняют статусы артефактов — библиотека тоже.
+        [t.MESSAGE_SWIPED, (id) => {
+            const dg = dgIdOf(id);
+            if (dg) coordinator?.bumpMessageRevision(dg);
+            panelApi?.refreshArtifacts?.();
+        }],
+        [t.MESSAGE_EDITED, (id) => {
+            const dg = dgIdOf(id);
+            if (dg) coordinator?.bumpMessageRevision(dg);
+            panelApi?.refreshArtifacts?.();
+        }],
         [t.CHAT_CHANGED, () => {
             coordinator?.invalidateAll();
             clearImageCache(); // кэш data:-URL фото привязан к чату — не тащим в новый

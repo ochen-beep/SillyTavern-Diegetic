@@ -5,6 +5,7 @@
 import { getCtx, getApiKey } from './core.js';
 import { normalizeCmProfiles, buildCmMessages, extractCmText, cmErrorMessage } from './cm.js';
 import { classifyEndpoint, isOriginAllowed } from './endpoint-policy.js';
+import { tr } from './i18n.js';
 
 export function getMessage(id) {
     return getCtx()?.chat?.[Number(id)] ?? null;
@@ -34,24 +35,24 @@ async function generateViaCm({ system, user, profile, signal }) {
     const ctx = getCtx();
     const svc = ctx?.ConnectionManagerRequestService;
     if (!svc?.sendRequest) {
-        throw new Error('Connection Manager недоступен — включи расширение connection-manager или выбери другой источник');
+        throw new Error(tr('Connection Manager unavailable — enable the connection-manager extension or pick another source', 'diegetic.host.cmUnavailable'));
     }
     const profileId = profile?.sourceConfig?.profileId;
-    if (!profileId) throw new Error('В профиле не выбран профиль подключения');
+    if (!profileId) throw new Error(tr('No connection profile selected in the profile', 'diegetic.host.cmNoProfile'));
     // CM мог ещё не наполнить профили к первому запросу — одна передышка;
     // если и после неё список пуст, фейлим сразу и понятно.
     if (listCmProfiles().length === 0) {
         await new Promise(r => setTimeout(r, 300));
         if (listCmProfiles().length === 0) {
-            throw new Error(`Профили Connection Manager не загружены — профиль «${profile?.sourceConfig?.profileName || profileId}» не найден. Проверь настройки CM или выбери другой источник`);
+            throw new Error(tr('Connection Manager profiles not loaded — profile «{name}» not found. Check CM settings or pick another source', 'diegetic.host.cmProfilesMissing').replace('{name}', profile?.sourceConfig?.profileName || profileId));
         }
     }
     // Доп. параметры запроса (например, отключение reasoning) — в payload.
     let override = {};
     const extraRaw = String(profile?.sourceConfig?.extraBody ?? '').trim();
     if (extraRaw) {
-        try { override = JSON.parse(extraRaw); } catch { throw new Error('«Доп. параметры» — не JSON'); }
-        if (!override || typeof override !== 'object' || Array.isArray(override)) throw new Error('«Доп. параметры» — должен быть JSON-объект');
+        try { override = JSON.parse(extraRaw); } catch { throw new Error(tr('«Extra params» — not JSON', 'diegetic.host.extraNotJson')); }
+        if (!override || typeof override !== 'object' || Array.isArray(override)) throw new Error(tr('«Extra params» — must be a JSON object', 'diegetic.host.extraNotObject'));
     }
     let resp;
     try {
@@ -61,10 +62,10 @@ async function generateViaCm({ system, user, profile, signal }) {
         if (signal?.aborted || e?.name === 'AbortError' || e?.cause?.name === 'AbortError') {
             throw new DOMException('Aborted', 'AbortError');
         }
-        throw new Error(`Профиль «${profile?.sourceConfig?.profileName || profileId}»: ${cmErrorMessage(e)}`);
+        throw new Error(tr('Profile «{name}»: {msg}', 'diegetic.host.cmProfileError').replace('{name}', profile?.sourceConfig?.profileName || profileId).replace('{msg}', cmErrorMessage(e)));
     }
     const text = extractCmText(resp);
-    if (text === null) throw new Error('Профиль вернул ответ, но текст из него извлечь не удалось');
+    if (text === null) throw new Error(tr('The profile returned a reply but its text could not be extracted', 'diegetic.host.cmNoText'));
     return text;
 }
 
@@ -75,17 +76,17 @@ async function generateViaCustom({ system, user, profile, signal }) {
     const ep = classifyEndpoint(sc.apiurl);
     if (!ep.ok) throw new Error(`custom endpoint: ${ep.error}`);
     if (ep.kind === 'insecure-http' && !isOriginAllowed(ep.origin, profile?.httpAllowList)) {
-        throw new Error(`custom endpoint: plain-HTTP вне localhost запрещён — подтверди «${ep.origin}» в настройках источника`);
+        throw new Error(tr('custom endpoint: plain-HTTP outside localhost is forbidden — confirm «{origin}» in source settings', 'diegetic.host.customInsecure').replace('{origin}', ep.origin));
     }
     const key = (await getApiKey('source')) || '';
     let extra = {};
     const extraRaw = String(sc.extraBody ?? '').trim();
     if (extraRaw) {
-        try { extra = JSON.parse(extraRaw); } catch { throw new Error('custom endpoint: «Доп. параметры» — не JSON'); }
-        if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error('custom endpoint: «Доп. параметры» — должен быть JSON-объект');
+        try { extra = JSON.parse(extraRaw); } catch { throw new Error(tr('custom endpoint: «Extra params» — not JSON', 'diegetic.host.customExtraNotJson')); }
+        if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error(tr('custom endpoint: «Extra params» — must be a JSON object', 'diegetic.host.customExtraNotObject'));
     }
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(new Error('custom endpoint: таймаут 5 мин')), 300_000);
+    const timer = setTimeout(() => ctrl.abort(new Error(tr('custom endpoint: 5 min timeout', 'diegetic.host.customTimeout'))), 300_000);
     // Отмена могла прийти, пока шли await'ы выше (ключ, шаблон, контекст):
     // слушатель на уже-аборченном сигнале не сработает — проверяем состояние.
     const onAbort = () => ctrl.abort(signal.reason);
@@ -103,16 +104,16 @@ async function generateViaCustom({ system, user, profile, signal }) {
             }),
             signal: ctrl.signal,
         });
-        if (!res.ok) throw new Error(`custom endpoint: HTTP ${res.status}`);
+        if (!res.ok) throw new Error(tr('custom endpoint: HTTP {status}', 'diegetic.host.customHttp').replace('{status}', res.status));
         const text = extractCmText(await res.json().catch(() => null));
-        if (text === null) throw new Error('custom endpoint: не удалось извлечь текст из ответа');
+        if (text === null) throw new Error(tr('custom endpoint: could not extract text from the reply', 'diegetic.host.customNoText'));
         return text;
     } catch (e) {
         if (ctrl.signal.aborted && signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         // TypeError = fetch даже не получил ответ: CORS-блокировка или сеть.
         // Голый «Failed to fetch» пользователя ни к чему не ведёт.
         if (e instanceof TypeError) {
-            throw new Error(`custom endpoint: ${e.message} — сервер не ответил. Проверь URL и CORS-политику: сервер должен отдавать Access-Control-Allow-Origin для запросов из браузера`);
+            throw new Error(tr('custom endpoint: {msg} — the server did not respond. Check the URL and CORS policy: the server must send Access-Control-Allow-Origin for browser requests', 'diegetic.host.customNetwork').replace('{msg}', e.message));
         }
         throw e;
     } finally {
@@ -128,7 +129,7 @@ async function generateViaCustom({ system, user, profile, signal }) {
  */
 export async function generateText({ system, user, profile, signal }) {
     const ctx = getCtx();
-    if (!ctx) throw new Error('контекст ST недоступен');
+    if (!ctx) throw new Error(tr('ST context unavailable', 'diegetic.host.noCtx'));
     const sys = subst(ctx, system);
     const usr = subst(ctx, user);
     if (profile?.source === 'custom') return generateViaCustom({ system: sys, user: usr, profile, signal });

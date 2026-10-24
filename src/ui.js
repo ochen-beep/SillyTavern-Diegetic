@@ -6,6 +6,7 @@
 // #dg-ext: старый runner-скрипт рисует панель с теми же id — наши обработчики
 // не должны на него срабатывать.
 import { readRawPayload, digestForVariant } from './payload.js';
+import { tr } from './i18n.js';
 
 /** Чистая: строки списка артефактов для панели — скан payload'ов всего чата.
  *  msgId — это индекс в массиве chat. Статус stale: digest payload разошёлся
@@ -139,8 +140,18 @@ const CSS = `
   width: 100dvw; height: 100dvh; }
 /* d-единицы последними: следуют за скрытием URL-бара мобильного браузера,
    lvh застыл бы на «большом» вьюпорте. Старые движки берут lvh/vh выше. */
-/* Скролл-лок чата под открытым лайтбоксом (класс вешает render.js openPopup). */
+/* Скролл-лок чата под открытым лайтбоксом (класс вешает render.js openPopup).
+   Б3: overflow:hidden не держит тач-скролл на WebKit — touch-action:none на
+   body гасит сам жест; жесты внутри iframe артефакта не затронуты (другой документ). */
 html.dg-lock, html.dg-lock body { overflow: hidden; overscroll-behavior: none; }
+html.dg-lock body { touch-action: none; }
+/* Б34: равновысотный плейсхолдер снятого вне экрана артефакта. */
+.dg-lazy { width: 100%; border: 1px dashed var(--SmartThemeBorderColor, rgba(255,255,255,.25)); border-radius: 8px; opacity: .35; box-sizing: border-box; }
+/* Б39:Reduced motion — пульс busy-кнопок отключаем. */
+@media (prefers-reduced-motion: reduce) {
+  .dg-gen-btn.dg-busy i, .dg-launcher-btn.dg-busy { animation: none; }
+  #dg-ext .dg-switch i, #dg-ext .dg-switch i::after { transition: none; }
+}
 .dg-popup-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.72); }
 /* Колонка: шапка сверху во всю ширину, артефакт ниже. Без column iframe на
    100% ширины сплющивает header в узкую полоску сбоку. */
@@ -197,15 +208,23 @@ html.dg-lock, html.dg-lock body { overflow: hidden; overscroll-behavior: none; }
 // пользователь: всё это попадает в документ через .html() — только через esc.
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const DISPLAY_LABELS = { inline: 'Сразу в посте', expand: 'Кнопка → развернуть в посте', popup: 'Кнопка → во всплывающем окне' };
-const BUTTON_LABELS = { post: 'У каждого поста', bar: 'В квик-баре', floating: 'Плавающая' };
+const DISPLAY_LABELS = {
+    inline: () => tr('Inline in the post', 'diegetic.panel.display.inline'),
+    expand: () => tr('Chip → expand in post', 'diegetic.panel.display.expand'),
+    popup: () => tr('Chip → popup window', 'diegetic.panel.display.popup'),
+};
+const BUTTON_LABELS = {
+    post: () => tr('On each post', 'diegetic.panel.button.post'),
+    bar: () => tr('In the quick bar', 'diegetic.panel.button.bar'),
+    floating: () => tr('Floating', 'diegetic.panel.button.floating'),
+};
 
 /** Статусы привязки артефакта для панельного списка: точка-цвет + пояснение. */
 const ART_STATUS = {
-    ok: { color: '#9c9', label: 'привязан к якорю' },
-    fuzzy: { color: '#fc6', label: 'привязка неточная (fuzzy)' },
-    orphan: { color: '#f88', label: 'якорь не найден — показан в конце поста' },
-    stale: { color: '#9cf', label: 'текст поста менялся — перепривяжется при отрисовке' },
+    ok: { color: '#9c9', label: () => tr('bound to anchor', 'diegetic.status.ok') },
+    fuzzy: { color: '#fc6', label: () => tr('imprecise binding (fuzzy)', 'diegetic.status.fuzzy') },
+    orphan: { color: '#f88', label: () => tr('anchor not found — shown at the end of the post', 'diegetic.status.orphan') },
+    stale: { color: '#9cf', label: () => tr('post text changed — will rebind on render', 'diegetic.status.stale') },
 };
 
 /** Дата артефакта для панели: дд.мм чч:мм по локали, без года и секунд. */
@@ -219,18 +238,18 @@ const artDate = (ts) => {
 
 /** Чистая: HTML строк панельного списка артефактов чата. */
 export function artifactListHtml(rows) {
-    if (!rows?.length) return '<p class="dg-hint">в этом чате артефактов пока нет</p>';
+    if (!rows?.length) return `<p class="dg-hint">${tr('no artifacts in this chat yet', 'diegetic.panel.library.empty')}</p>`;
     return rows.map((a) => {
         const st = ART_STATUS[a.status] ?? ART_STATUS.ok;
         const date = artDate(a.createdAt);
         return `<div class="dg-art-row" data-msg="${Number(a.msgId)}" data-art="${esc(a.id)}">`
-            + `<span class="dg-art-status" style="color:${st.color}" title="${esc(st.label)}">●</span>`
-            + `<span class="dg-art-type" data-art-open title="Предпросмотр">${esc(a.type || 'artifact')}</span>`
+            + `<span class="dg-art-status" style="color:${st.color}" title="${esc(st.label())}">●</span>`
+            + `<span class="dg-art-type" data-art-open title="${tr('Preview', 'diegetic.panel.preview')}">${esc(a.type || 'artifact')}</span>`
             + `<span class="dg-art-meta">пост #${Number(a.msgId)}${date ? ` · ${date}` : ''}</span>`
-            + '<button type="button" class="dg-art-btn" data-art-open title="Открыть во всплывающем окне">👁</button>'
-            + '<button type="button" class="dg-art-btn" data-art-save title="Сохранить как .html">⤓</button>'
-            + '<button type="button" class="dg-art-btn" data-art-regen title="Перегенерировать артефакты поста">⟳</button>'
-            + '<button type="button" class="dg-art-btn" data-art-del title="Удалить артефакт">✕</button>'
+            + `<button type="button" class="dg-art-btn" data-art-open title="${tr('Open in a popup', 'diegetic.panel.openPopup')}">👁</button>`
+            + `<button type="button" class="dg-art-btn" data-art-save title="${tr('Save as .html', 'diegetic.panel.saveFile')}">⤓</button>`
+            + `<button type="button" class="dg-art-btn" data-art-regen title="${tr('Regenerate post artifacts', 'diegetic.panel.regenPost')}">⟳</button>`
+            + `<button type="button" class="dg-art-btn" data-art-del title="${tr('Delete artifact', 'diegetic.panel.deleteArtifact')}">✕</button>`
             + '</div>';
     }).join('');
 }
@@ -390,8 +409,8 @@ function makeLauncherButton(id, cls, { fab = false } = {}) {
     b.id = id;
     b.className = cls;
     b.title = fab
-        ? 'Diegetic: сгенерировать артефакт для последнего поста (перетаскивается)'
-        : 'Diegetic: сгенерировать артефакт для последнего поста';
+        ? tr('Diegetic: generate an artifact for the last post (draggable)', 'diegetic.panel.fabTitleDrag')
+        : tr('Diegetic: generate an artifact for the last post', 'diegetic.panel.fabTitle');
     b.innerHTML = '<i class="fa-solid fa-scroll"></i>';
     if (fab) {
         b.setAttribute('role', 'button');
@@ -407,17 +426,26 @@ function makeLauncherButton(id, cls, { fab = false } = {}) {
     return b;
 }
 
-/** Создать/перецепить кнопку бара в текущий хост. false — хоста ещё нет. */
+/** Создать/перецепить кнопку бара в текущий хост. false — хоста ещё нет.
+ *  Б11: при живой прицепленной кнопке функция не читает offsetHeight
+ *  (forced reflow на каждой мутации #send_form при стриминге) — размер
+ *  считается один раз при создании/перецеплении кнопки. */
 function syncBarButton() {
     const host = getLauncherHost();
     if (!host) return false;
     const btn = document.getElementById('dg-launcher-bar')
         || makeLauncherButton('dg-launcher-bar', 'qr--button menu_button interactable dg-launcher-btn');
-    if (btn.parentElement !== host) host.appendChild(btn);
+    let moved = false;
+    if (btn.parentElement !== host) { host.appendChild(btn); moved = true; }
     // Квадрат по фактической высоте бара: в flex-ряду aspect-ratio проигрывает
     // content-ширине, а fa-scroll уже соседних иконок — кнопка выглядит кособоко.
-    const h = btn.offsetHeight;
-    if (h) btn.style.width = `${h}px`;
+    if (moved || btn.getAttribute?.('data-dg-sized') !== '1') {
+        const h = btn.offsetHeight;
+        if (h) {
+            btn.style.width = `${h}px`;
+            btn.setAttribute?.('data-dg-sized', '1');
+        }
+    }
     return true;
 }
 
@@ -457,6 +485,8 @@ export function ensureLauncher(mode, onClick) {
         // а при смене чата/настроек пересобирает контейнер — кнопка гибнет
         // вместе с ним. Поэтому наблюдатель вешаем всегда: он создаст кнопку,
         // когда хост появится, и пересоздаст её после пересборки.
+        // Дешевизна на мутациях (Б11): сам syncBarButton при живой прицепленной
+        // кнопке не читает offsetHeight (forced reflow на каждом стриминг-токене).
         const target = document.getElementById('send_form') || document.documentElement;
         if (!_launcherObserver) {
             _launcherObserver = new MutationObserver(() => {
@@ -470,9 +500,11 @@ export function ensureLauncher(mode, onClick) {
         disconnectLauncherObserver();
         if (!fab) document.body.appendChild(makeLauncherButton('dg-launcher-fab', 'dg-launcher-btn interactable', { fab: true }));
         // Вьюпорт сжался — вернуть кнопку внутрь (позиция в localStorage не трогается).
+        // Б13: клавиатура мобильного меняет visualViewport без window.resize.
         if (!_fabResizeBound && typeof window !== 'undefined') {
             _fabResizeBound = true;
             window.addEventListener('resize', onFabResize);
+            globalThis.visualViewport?.addEventListener?.('resize', onFabResize);
         }
     }
 }
@@ -494,7 +526,7 @@ export function mountPanel(deps) {
     if (!mountPanel._legacyWarned && doc.querySelector('iframe[id^="TH-script--Diegetic"]')) {
         mountPanel._legacyWarned = true;
         doc.defaultView?.toastr?.warning?.(
-            'В библиотеке скриптов 酒馆助手 всё ещё включён старый скрипт «Diegetic» — он дублирует настройки и генерацию. Отключите или удалите его там.',
+            tr('The old «Diegetic» script is still enabled in the 酒馆助手 script library — it duplicates settings and generation. Disable or remove it there.', 'diegetic.warn.legacyRunner'),
             'Diegetic', { timeOut: 12000 });
     }
 
@@ -521,9 +553,9 @@ export function mountPanel(deps) {
     const panel = container.querySelector('.dg-body');
 
     const displayOpts = (sel) => ['inline', 'expand', 'popup']
-        .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${DISPLAY_LABELS[s]}</option>`).join('');
+        .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${esc(DISPLAY_LABELS[s]())}</option>`).join('');
     const buttonOpts = (sel) => ['post', 'bar', 'floating']
-        .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${BUTTON_LABELS[s]}</option>`).join('');
+        .map(s => `<option value="${s}" ${s === sel ? 'selected' : ''}>${esc(BUTTON_LABELS[s]())}</option>`).join('');
 
     const render = () => {
         const st = deps.settings();
@@ -536,114 +568,137 @@ export function mountPanel(deps) {
         $(panel).html(`
       <div class="dg-section">
         <div class="dg-row">
-          <label for="dg-enabled"><b>Автогенерация</b> — артефакт после каждого поста
-            <div class="dg-hint">выключена — запуск кнопкой ◆ у поста или из квик-бара</div></label>
+          <label for="dg-enabled">${tr('<b>Auto-generate</b> — artifact after each post', 'diegetic.panel.auto.label')}
+            <div class="dg-hint">${tr('off — run with the ◆ button on a post or from the quick bar', 'diegetic.panel.auto.hint')}</div></label>
           <span class="dg-switch"><input type="checkbox" id="dg-enabled" ${st.enabled ? 'checked' : ''}/><i></i></span>
         </div>
       </div>
       <div class="dg-section">
-        <p class="dg-title">Показ и кнопка</p>
-        <div class="dg-row"><label for="dg-display-mode">Артефакт в посте</label>
+        <p class="dg-title">${tr('Show and button', 'diegetic.panel.show')}</p>
+        <div class="dg-row"><label for="dg-display-mode">${tr('Artifact in post', 'diegetic.panel.display')}</label>
           <select id="dg-display-mode" class="text_pole">${displayOpts(st.displayMode)}</select></div>
-        <div class="dg-row"><label for="dg-button-mode">Кнопка генерации</label>
+        <div class="dg-row"><label for="dg-button-mode">${tr('Generate button', 'diegetic.panel.button')}</label>
           <select id="dg-button-mode" class="text_pole">${buttonOpts(st.buttonMode)}</select></div>
+        <div class="dg-row"><label for="dg-appearance">${tr('Success notifications', 'diegetic.panel.appearance')}</label>
+          <select id="dg-appearance" class="text_pole">
+            <option value="toast" ${st.appearance !== 'silent' ? 'selected' : ''}>${tr('show toasts', 'diegetic.panel.appearance.toast')}</option>
+            <option value="silent" ${st.appearance === 'silent' ? 'selected' : ''}>${tr('silent', 'diegetic.panel.appearance.silent')}</option>
+          </select></div>
+        <div class="dg-row"><label for="dg-lazy">${tr('Off-screen artifacts', 'diegetic.panel.lazy')}</label>
+          <select id="dg-lazy" class="text_pole">
+            <option value="auto" ${st.lazyFrames === 'auto' ? 'selected' : ''}>${tr('auto — unload on phones', 'diegetic.panel.lazy.auto')}</option>
+            <option value="on" ${st.lazyFrames === 'on' ? 'selected' : ''}>${tr('unload off-screen', 'diegetic.panel.lazy.on')}</option>
+            <option value="off" ${st.lazyFrames === 'off' ? 'selected' : ''}>${tr('keep running', 'diegetic.panel.lazy.off')}</option>
+          </select>
+          <div class="dg-sub">${tr('saves battery and CPU in long chats; an unloaded artifact loses its state', 'diegetic.panel.lazy.hint')}</div>
+        </div>
       </div>
       <div class="dg-section">
-        <p class="dg-title">Шаблон</p>
+        <p class="dg-title">${tr('Template', 'diegetic.panel.template')}</p>
         <select id="dg-template-select" class="text_pole dg-wide"></select>
         <textarea id="dg-template-text" class="text_pole dg-wide" rows="10" style="margin-top:8px" spellcheck="false"></textarea>
         <div class="dg-btnrow">
-          <button class="menu_button dg-btn-primary" id="dg-tpl-save">Сохранить</button>
-          <button class="menu_button" id="dg-tpl-saveas">Сохранить как…</button>
-          <button class="menu_button" id="dg-tpl-reset">Вернуть встроенный</button>
-          <button class="menu_button dg-btn-danger" id="dg-tpl-del">Удалить</button>
+          <button class="menu_button dg-btn-primary" id="dg-tpl-save">${tr('Save', 'diegetic.panel.template.save')}</button>
+          <button class="menu_button" id="dg-tpl-saveas">${tr('Save as…', 'diegetic.panel.template.saveAs')}</button>
+          <button class="menu_button" id="dg-tpl-reset">${tr('Reset to builtin', 'diegetic.panel.template.reset')}</button>
+          <button class="menu_button dg-btn-danger" id="dg-tpl-del">${tr('Delete', 'diegetic.panel.template.delete')}</button>
         </div>
         <div class="dg-btnrow" id="dg-tpl-saveas-row" style="display:none">
-          <input id="dg-tpl-saveas-name" class="text_pole" style="flex:1" placeholder="имя нового шаблона"/>
-          <button class="menu_button dg-btn-primary" id="dg-tpl-saveas-ok">Сохранить</button>
+          <input id="dg-tpl-saveas-name" class="text_pole" style="flex:1" placeholder="${tr('new template name', 'diegetic.panel.template.namePlaceholder')}"/>
+          <button class="menu_button dg-btn-primary" id="dg-tpl-saveas-ok">${tr('Save', 'diegetic.panel.template.save')}</button>
         </div>
         <div class="dg-row" style="margin-top:8px">
-          <label for="dg-max-count">Артефактов на пост</label>
+          <label for="dg-max-count">${tr('Artifacts per post', 'diegetic.panel.maxCount')}</label>
           <input id="dg-max-count" type="number" class="text_pole" min="1" max="5" value="${st.maxPerMessage}"/>
         </div>
       </div>
       <div class="dg-section">
-        <p class="dg-title">Источник генерации</p>
-        <div class="dg-seg" role="group" aria-label="Источник генерации">
-          <button type="button" class="dg-seg-btn" data-src="profile">Профиль подключения</button>
-          <button type="button" class="dg-seg-btn" data-src="custom">Свой endpoint</button>
+        <p class="dg-title">${tr('Generation source', 'diegetic.panel.source')}</p>
+        <div class="dg-seg" role="group" aria-label="${tr('Generation source', 'diegetic.panel.source')}">
+          <button type="button" class="dg-seg-btn" data-src="profile">${tr('Connection profile', 'diegetic.panel.source.profile')}</button>
+          <button type="button" class="dg-seg-btn" data-src="custom">${tr('Custom endpoint', 'diegetic.panel.source.custom')}</button>
         </div>
         <div id="dg-src-profile" hidden>
           ${cmOptions
-            ? `<div class="dg-row"><label for="dg-cm-profile">Профиль подключения</label>
+            ? `<div class="dg-row"><label for="dg-cm-profile">${tr('Connection profile', 'diegetic.panel.source.profile')}</label>
                <select id="dg-cm-profile" class="text_pole">${cmOptions}</select></div>
-               <p class="dg-hint">Выбор сохраняется сразу.</p>`
-            : '<p class="dg-hint">Расширение connection-manager не найдено или в нём нет профилей.</p>'}
+               <p class="dg-hint">${tr('The choice is saved immediately.', 'diegetic.panel.source.savedImmediately')}</p>`
+            : `<p class="dg-hint">${tr('connection-manager not found or has no profiles.', 'diegetic.panel.source.profileMissing')}</p>`}
         </div>
         <div id="dg-src-custom" hidden>
           <div class="dg-fields">
             <label for="dg-apiurl">URL</label>
             <input id="dg-apiurl" type="text" class="text_pole" value="${esc(deps.getCustom().apiurl)}" placeholder="https://…/v1"/>
-            <label for="dg-model">Модель</label>
-            <input id="dg-model" type="text" class="text_pole" value="${esc(deps.getCustom().model)}" placeholder="необязательно"/>
-            <label for="dg-key">Ключ</label>
-            <input id="dg-key" type="password" class="text_pole" value="" placeholder="sk-… (хранится в браузере)"/>
+            <label for="dg-model">${tr('Model', 'diegetic.panel.source.model')}</label>
+            <input id="dg-model" type="text" class="text_pole" value="${esc(deps.getCustom().model)}" placeholder="${tr('optional', 'diegetic.panel.source.modelOptional')}"/>
+            <label for="dg-key">${tr('API key', 'diegetic.panel.source.key')}</label>
+            <input id="dg-key" type="password" class="text_pole" value="" placeholder="sk-… (${tr('stored in the browser', 'diegetic.panel.source.keyStoredIn')})"/>
           </div>
-          <div class="dg-btnrow"><button class="menu_button dg-btn-primary" id="dg-save-source">Применить</button></div>
+          <div class="dg-btnrow"><button class="menu_button" id="dg-test-source">${tr('Test connection', 'diegetic.panel.source.test')}</button><button class="menu_button dg-btn-primary" id="dg-save-source">${tr('Apply', 'diegetic.panel.source.apply')}</button></div>
         </div>
-        <div class="dg-row"><label for="dg-extrabody">Доп. параметры запроса (JSON)</label>
+        <div class="dg-row"><label for="dg-extrabody">${tr('Extra request params (JSON)', 'diegetic.panel.extraBody')}</label>
           <input id="dg-extrabody" type="text" class="text_pole" value="${esc(deps.getCustom().extraBody)}" placeholder='{"reasoning_effort":"none"}' style="min-width:230px"/></div>
       </div>
       <div class="dg-section">
-        <p class="dg-title">Контекст генерации</p>
+        <p class="dg-title">${tr('Generation context', 'diegetic.panel.ctx')}</p>
         <div class="dg-row">
-          <label for="dg-ctx-history">История чата</label>
+          <label for="dg-ctx-history">${tr('Chat history', 'diegetic.panel.ctx.history')}</label>
           <span style="display:flex; align-items:center; gap:8px">
-            <input id="dg-ctx-depth" type="number" class="text_pole" min="1" max="20" value="${st.contextDepth}" ${st.ctxHistory ? '' : 'disabled'} title="глубина, сообщений"/>
+            <input id="dg-ctx-depth" type="number" class="text_pole" min="1" max="20" value="${st.contextDepth}" ${st.ctxHistory ? '' : 'disabled'} title="${tr('depth, messages', 'diegetic.panel.ctx.depthTitle')}"/>
             <span class="dg-switch"><input type="checkbox" id="dg-ctx-history" ${st.ctxHistory ? 'checked' : ''}/><i></i></span>
           </span>
         </div>
-        <div class="dg-row"><label for="dg-ctx-persona">Персона {{user}}</label>
+        <div class="dg-row"><label for="dg-ctx-persona">${tr('Persona {{user}}', 'diegetic.panel.ctx.persona')}</label>
           <span class="dg-switch"><input type="checkbox" id="dg-ctx-persona" class="checkbox" ${st.ctxPersona ? 'checked' : ''}/><i></i></span></div>
-        <div class="dg-row"><label for="dg-ctx-character">Описание персонажа</label>
+        <div class="dg-row"><label for="dg-ctx-character">${tr('Character card', 'diegetic.panel.ctx.character')}</label>
           <span class="dg-switch"><input type="checkbox" id="dg-ctx-character" class="checkbox" ${st.ctxCharacter ? 'checked' : ''}/><i></i></span></div>
-        <div class="dg-row"><label for="dg-ctx-world">Лорбуки — активированные записи</label>
+        <div class="dg-row"><label for="dg-ctx-world">${tr('Lorebooks — activated entries', 'diegetic.panel.ctx.world')}</label>
           <span class="dg-switch"><input type="checkbox" id="dg-ctx-world" class="checkbox" ${st.ctxWorld ? 'checked' : ''}/><i></i></span></div>
       </div>
       <div class="dg-section">
         <details>
-          <summary><span class="dg-title" style="display:inline">Библиотека артефактов</span></summary>
+          <summary><span class="dg-title" style="display:inline">${tr('Artifact library', 'diegetic.panel.library')}</span></summary>
           <div id="dg-art-list"></div>
-          <p class="dg-hint">👁 — открыть, ⤓ — файл, ⟳ — регенерация поста, ✕ — удалить.
-            Статус <b>orphan</b>: якорь не найден, показан в конце поста.</p>
+          <div class="dg-btnrow">
+            <button class="menu_button" id="dg-store-export" title="${tr('Download this chat\'s artifact file', 'diegetic.panel.library.exportTitle')}">${tr('⤓ Export', 'diegetic.panel.library.export')}</button>
+            <button class="menu_button" id="dg-store-import" title="${tr('Merge an artifact file (freshest wins)', 'diegetic.panel.library.importTitle')}">${tr('⤒ Import', 'diegetic.panel.library.import')}</button>
+            <button class="menu_button" id="dg-store-gc" title="${tr('Remove entries of deleted posts and swipes', 'diegetic.panel.library.gcTitle')}">${tr('🧹 Clean orphans', 'diegetic.panel.library.gc')}</button>
+            <button class="menu_button dg-btn-danger" id="dg-store-detach" title="${tr('Copies entries to a new file: the chat stops sharing artifacts with forks', 'diegetic.panel.library.detachTitle')}">${tr('Detach storage', 'diegetic.panel.library.detach')}</button>
+            <input type="file" id="dg-store-import-file" accept="application/json,.json" style="display:none"/>
+          </div>
+          <div class="dg-btnrow" id="dg-store-retry-row" hidden>
+            <button class="menu_button dg-btn-danger" id="dg-store-retry">${tr('Retry storage write', 'diegetic.panel.library.retry')}</button>
+          </div>
+          <p class="dg-hint" id="dg-store-status"></p>
+          <p class="dg-hint">${tr('👁 — open, ⤓ — file, ⟳ — regenerate post, ✕ — delete.', 'diegetic.panel.library.hint')}
+            ${tr('Status <b>orphan</b>: anchor not found, shown at the end of the post.', 'diegetic.panel.library.orphanHint')}</p>
         </details>
       </div>
       <div class="dg-section">
         <details>
-          <summary><span class="dg-title" style="display:inline">Фото через URIS</span></summary>
-          <div class="dg-row"><label for="dg-img-mode">Режим</label>
+          <summary><span class="dg-title" style="display:inline">${tr('Photos via URIS', 'diegetic.panel.photo')}</span></summary>
+          <div class="dg-row"><label for="dg-img-mode">${tr('Mode', 'diegetic.panel.photo.mode')}</label>
             <select id="dg-img-mode" class="text_pole">
-              <option value="off" ${st.imageMode === 'off' ? 'selected' : ''}>выключено</option>
-              <option value="button" ${st.imageMode === 'button' ? 'selected' : ''}>по кнопке 📷 на посте</option>
-              <option value="auto" ${st.imageMode === 'auto' ? 'selected' : ''}>авто (платно, за каждый слот)</option>
+              <option value="off" ${st.imageMode === 'off' ? 'selected' : ''}>${tr('off', 'diegetic.panel.photo.mode.off')}</option>
+              <option value="button" ${st.imageMode === 'button' ? 'selected' : ''}>${tr('via the 📷 button on a post', 'diegetic.panel.photo.mode.button')}</option>
+              <option value="auto" ${st.imageMode === 'auto' ? 'selected' : ''}>${tr('auto (paid, per slot)', 'diegetic.panel.photo.mode.auto')}</option>
             </select></div>
-          <div class="dg-row"><label for="dg-img-quality">Качество</label>
+          <div class="dg-row"><label for="dg-img-quality">${tr('Quality', 'diegetic.panel.photo.quality')}</label>
             <select id="dg-img-quality" class="text_pole">
               <option value="low" ${st.imageQuality === 'low' ? 'selected' : ''}>low</option>
               <option value="medium" ${st.imageQuality === 'medium' ? 'selected' : ''}>medium</option>
               <option value="high" ${st.imageQuality === 'high' ? 'selected' : ''}>high</option>
             </select></div>
-          <p class="dg-hint" id="dg-uris-status">проверка моста…</p>
-          <p class="dg-hint">Слоты в артефактах (<code>data-dg-img</code>) заполняются фото из
-            UR Image Studio: поляроиды, селфи, снимки к статьям. CSS-плейсхолдер — фолбэк.</p>
+          <p class="dg-hint" id="dg-uris-status">${tr('checking bridge…', 'diegetic.panel.photo.checking')}</p>
+          <p class="dg-hint">${tr('Artifact slots (<code>data-dg-img</code>) are filled with photos from UR Image Studio: polaroids, selfies, article shots. The CSS placeholder is the fallback.', 'diegetic.panel.photo.hint')}</p>
         </details>
       </div>
       <div class="dg-section">
         <details>
-          <summary><span class="dg-title" style="display:inline">Исключения авторежима</span></summary>
+          <summary><span class="dg-title" style="display:inline">${tr('Auto-mode exclusions', 'diegetic.panel.excl')}</span></summary>
           <textarea id="dg-excl" class="text_pole dg-wide" rows="3">${esc(deps.getExclusions())}</textarea>
-          <div class="dg-btnrow"><button class="menu_button" id="dg-save-excl">Сохранить исключения</button></div>
-          <p class="dg-hint">фраза на строку — на постах с такой фразой авторежим молчит</p>
+          <div class="dg-btnrow"><button class="menu_button" id="dg-save-excl">${tr('Save exclusions', 'diegetic.panel.excl.save')}</button></div>
+          <p class="dg-hint">${tr('one phrase per line — auto mode stays silent on posts containing it', 'diegetic.panel.excl.hint')}</p>
         </details>
       </div>`);
             refreshUrisStatus();
@@ -657,7 +712,20 @@ export function mountPanel(deps) {
     // ── Список артефактов чата: ⟳ регенерация / ✕ удаление ──
     const renderArtifactList = () => {
         const box = doc.getElementById('dg-art-list');
-        if (box && deps.listArtifacts) box.innerHTML = artifactListHtml(deps.listArtifacts());
+        if (box && deps.listArtifacts) {
+            const rows = deps.listArtifacts();
+            // Б40: объём хранилища — видим, что чат растёт.
+            const kb = (rows.reduce((acc, r) => acc + (Number(r.bytes) || 0), 0) / 1024).toFixed(1);
+            const counter = tr('{n} artifact(s) · {kb} KB', 'diegetic.panel.library.counter')
+                .replace('{n}', rows.length).replace('{kb}', kb);
+            box.innerHTML = (rows.length ? `<p class="dg-hint">${counter}</p>` : '') + artifactListHtml(rows);
+        }
+        // Б20: след неудавшейся записи — кнопка повтора рядом.
+        const st = deps.storeStatus?.();
+        const statusEl = doc.getElementById('dg-store-status');
+        const retryRow = doc.getElementById('dg-store-retry-row');
+        if (statusEl && st) statusEl.textContent = st.ok ? '' : tr('⚠ Last storage write failed ({error})', 'diegetic.panel.library.writeFailed').replace('{error}', st.error ?? '');
+        if (retryRow) retryRow.hidden = !(st && !st.ok);
     };
 
     // ── Источник: сегментный выбор ──
@@ -683,6 +751,10 @@ export function mountPanel(deps) {
     // Monotonic-request guard: быстрые переключения дают несколько async-
     // загрузок; отставшая не должна перезаписать textarea.
     let _tplReq = 0;
+    // Б30: несохранённый черновик переживает перерисовки панели (смена
+    // buttonMode дёргает полный render() и раньше стирала ввод). Снимается
+    // сменой шаблона и всеми сохраняющими действиями.
+    let _tplDraft = null;
     async function syncTemplateEditor() {
         const req = ++_tplReq;
         const st = deps.settings();
@@ -725,9 +797,10 @@ export function mountPanel(deps) {
         const content = dangling ? null : await deps.loadTemplateContent(cur);
         if (req !== _tplReq) return;
         if (textarea) {
-            textarea.value = dangling
+            const draft = (!dangling && _tplDraft != null && select.value === cur) ? _tplDraft : null;
+            textarea.value = draft ?? (dangling
                 ? `Шаблон «${cur}» пока недоступен. Выбор сохранён; текст появится, когда шаблон существует.`
-                : String(content ?? '');
+                : String(content ?? ''));
             textarea.disabled = dangling;
         }
         // Встроенные под замком: Save/Reset/Delete неактивны, путь — «Сохранить как…».
@@ -768,10 +841,12 @@ export function mountPanel(deps) {
             const node = doc.getElementById('dg-uris-status');
             if (node) {
                 node.textContent = !st.available
-                    ? 'мост не найден — UR Image Studio не установлен или выключен'
+                    ? tr('bridge not found — UR Image Studio is not installed or disabled', 'diegetic.panel.photo.bridgeMissing')
                     : st.accepting
-                        ? `мост активен${st.connection ? `, подключение: ${st.connection.label}` : ' — но в чате не выбрано image-подключение'}`
-                        : 'мост найден, но URIS выключен или ещё инициализируется';
+                        ? (st.connection
+                            ? tr('bridge active, connection: {label}', 'diegetic.panel.photo.bridgeConn').replace('{label}', st.connection.label ?? '')
+                            : tr('bridge active — but no image connection selected in this chat', 'diegetic.panel.photo.bridgeNoConn'))
+                        : tr('bridge found, but URIS is off or still initializing', 'diegetic.panel.photo.bridgeOff');
             }
         }).catch(() => { /* urisStatus не бросает; на всякий случай не роняем панель */ }).finally(() => {
             _urisBusy = false;
@@ -799,14 +874,19 @@ export function mountPanel(deps) {
     // Шаблоны: локальная пересинхронизация редактора — полный render() закрыл бы
     // details и сбросил бы прокрутку.
     const tplResync = () => syncTemplateEditor();
+    // Б30: черновик textarea живёт между перерисовками панели.
+    $(doc).on('input.diegetic', '#dg-ext #dg-template-text', (e) => { _tplDraft = String(e.target.value ?? ''); });
+    const dropTplDraft = () => { _tplDraft = null; };
     // .val() на селекте без выбранной опции — null; String(null) записал бы
     // строку "null" в activeTemplate.
     $(doc).on('change.diegetic', '#dg-ext #dg-template-select', (e) => {
         const v = $(e.target).val();
+        dropTplDraft();
         deps.selectTemplate(v == null ? '' : String(v));
         tplResync();
     });
     $(doc).on('click.diegetic', '#dg-ext #dg-tpl-save', () => {
+        dropTplDraft();
         const text = String($('#dg-template-text').val() ?? '');
         deps.saveTemplate(text);
         tplResync();
@@ -823,28 +903,31 @@ export function mountPanel(deps) {
         // молчаливая замена необратимо теряла старый текст. «Сохранить» в
         // редакторе не трогаем — там намеренная правка активного шаблона.
         if (deps.listTemplates().includes(name) && deps.confirmDanger) {
-            const ok = await deps.confirmDanger(`Шаблон «${name}» уже есть. Перезаписать его текст новым?`);
+            const ok = await deps.confirmDanger(tr('Template «{name}» already exists. Overwrite its text?', 'diegetic.confirm.templateOverwrite').replace('{name}', name));
             if (!ok) return; // диалог «Сохранить как…» остаётся открытым
         }
         if (deps.saveTemplateAs(name, text)) {
+            dropTplDraft();
             $('#dg-tpl-saveas-row').hide();
             $('#dg-tpl-saveas-name').val('');
         } else {
             // Имя занято встроенной основой — сказать, а не молча закрыть диалог.
-            globalThis.toastr?.error(`Diegetic: «${name}» — имя занято встроенной основой`);
+            globalThis.toastr?.error(tr('«{name}» is taken by a builtin template', 'diegetic.toast.templateNameTaken').replace('{name}', name));
         }
         tplResync();
     });
     $(doc).on('click.diegetic', '#dg-ext #dg-tpl-reset', async () => {
+        dropTplDraft();
         await deps.resetTemplateToBuiltin();
         tplResync();
     });
     $(doc).on('click.diegetic', '#dg-ext #dg-tpl-del', async () => {
         const name = deps.getActiveTemplate();
         const ok = deps.confirmDanger
-            ? await deps.confirmDanger(`Удалить шаблон «${name}»? Его текст пропадёт безвозвратно.`)
+            ? await deps.confirmDanger(tr('Delete template «{name}»? Its text will be lost forever.', 'diegetic.confirm.templateDelete').replace('{name}', name))
             : true;
         if (!ok) return;
+        dropTplDraft();
         deps.deleteActiveTemplate();
         tplResync();
     });
@@ -857,13 +940,18 @@ export function mountPanel(deps) {
     $(doc).on('change.diegetic', '#dg-ext #dg-cm-profile', (e) => {
         deps.setCmProfile(String($(e.target).val() || ''), String($(e.target).find('option:selected').text() || ''));
     });
+    $(doc).on('change.diegetic', '#dg-ext #dg-appearance', (e) => { deps.setAppearance?.(String(e.target.value)); });
+
+    // Ключ: тост по фактическому результату записи (Б16) — в приватном режиме
+    // или при переполнении хранилища «ключ сохранён» был бы ложью.
     $(doc).on('change.diegetic', '#dg-ext #dg-key', function () {
         const val = String($(this).val() || '');
-        deps.setCustomKey(val).then(() => {
+        deps.setCustomKey(val).then((ok) => {
             $(this).val('');
-            $(this).attr('placeholder', val ? 'сохранён — введи для замены' : 'sk-… (хранится в браузере)');
-            globalThis.toastr?.success(val ? 'Diegetic: ключ сохранён' : 'Diegetic: ключ удалён');
-        }).catch(() => globalThis.toastr?.error('Diegetic: ключ не сохранился'));
+            if (!ok) { globalThis.toastr?.error(tr('Diegetic: key NOT saved — browser storage unavailable (private mode? full quota?)', 'diegetic.toast.keyNoStore')); return; }
+            $(this).attr('placeholder', val ? tr('saved — type to replace', 'diegetic.panel.source.keySaved') : `sk-… (${tr('stored in the browser', 'diegetic.panel.source.keyStoredIn')})`);
+            globalThis.toastr?.success(val ? tr('Diegetic: key saved', 'diegetic.toast.keySaved') : tr('Diegetic: key removed', 'diegetic.toast.keyRemoved'));
+        }).catch(() => globalThis.toastr?.error(tr('Diegetic: key not saved', 'diegetic.toast.keyFailed')));
     });
     $(doc).on('click.diegetic', '#dg-ext #dg-save-source', async () => {
         const res = await deps.applyCustom?.({
@@ -871,21 +959,35 @@ export function mountPanel(deps) {
             model: String($('#dg-model').val() || ''),
         });
         if (!res) return;
-        if (res.ok) globalThis.toastr?.success('Diegetic: endpoint применён');
+        if (res.ok) globalThis.toastr?.success(tr('Diegetic: endpoint applied', 'diegetic.toast.endpointApplied'));
         else globalThis.toastr?.error(`Diegetic: ${res.error}`);
     });
     $(doc).on('change.diegetic', '#dg-ext #dg-extrabody', function () {
         const res = deps.setCustomExtraBody?.(String($(this).val() || ''));
         if (res && !res.ok) globalThis.toastr?.error(`Diegetic: ${res.error}`);
     });
-    $(doc).on('change.diegetic', '#dg-ext #dg-max-count', (e) => { deps.setMaxPerMessage?.(Number(e.target.value)); });
+    // Числовые поля: мусор/выход за диапазон приводим к сохранённому значению
+    // сразу на месте (Б33), а не после перерендера панели.
+    $(doc).on('change.diegetic', '#dg-ext #dg-max-count', (e) => {
+        const el = e.target;
+        const n = Math.round(Number(el.value));
+        const ok = Number.isFinite(n) && n >= 1 && n <= 5;
+        deps.setMaxPerMessage?.(ok ? n : (deps.settings?.().maxPerMessage ?? 1));
+        if (!ok) el.value = deps.settings?.().maxPerMessage ?? 1;
+    });
 
     // Контекст: каждая секция — тумблер, глубина при истории.
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-history', (e) => {
         deps.setCtxHistory?.(e.target.checked);
         $('#dg-ctx-depth').prop('disabled', !e.target.checked);
     });
-    $(doc).on('change.diegetic', '#dg-ext #dg-ctx-depth', (e) => { deps.setContextDepth?.(Number(e.target.value)); });
+    $(doc).on('change.diegetic', '#dg-ext #dg-ctx-depth', (e) => {
+        const el = e.target;
+        const n = Math.round(Number(el.value));
+        const ok = Number.isFinite(n) && n >= 1 && n <= 20;
+        deps.setContextDepth?.(ok ? n : (deps.settings?.().contextDepth ?? 3));
+        if (!ok) el.value = deps.settings?.().contextDepth ?? 3;
+    });
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-persona', (e) => deps.setCtxPersona?.(e.target.checked));
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-character', (e) => deps.setCtxCharacter?.(e.target.checked));
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-world', (e) => deps.setCtxWorld?.(e.target.checked));
@@ -899,6 +1001,69 @@ export function mountPanel(deps) {
     });
     $(doc).on('change.diegetic', '#dg-ext #dg-img-quality', (e) => deps.setImageQuality?.(String(e.target.value)));
     $(doc).on('click.diegetic', '#dg-ext #dg-save-excl', () => { deps.setExclusions(String($('#dg-excl').val())); });
+
+    // Ленивые фреймы (Б34): смена режима перестраивает оболочки (ключ включает
+    // лень) — в index.js setLazyFrames зовёт reconcile.
+    $(doc).on('change.diegetic', '#dg-ext #dg-lazy', (e) => { deps.setLazyFrames?.(String(e.target.value)); });
+
+    // Б36: проверка источника до первого платного поста.
+    $(doc).on('click.diegetic', '#dg-ext #dg-test-source', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        const prev = btn.textContent;
+        btn.textContent = tr('Testing…', 'diegetic.panel.source.testing');
+        try {
+            const res = await deps.testSource?.();
+            if (res?.ok) globalThis.toastr?.success(tr('Diegetic: connection works — the model responds', 'diegetic.toast.testOk'));
+            else if (res?.empty) globalThis.toastr?.error(tr('Diegetic: connection works — but the model answered with emptiness', 'diegetic.toast.testEmpty'));
+            else globalThis.toastr?.error(tr('Diegetic: connection does not work — {error}', 'diegetic.toast.testFail').replace('{error}', res?.error ?? ''));
+        } finally {
+            btn.disabled = false;
+            btn.textContent = prev;
+        }
+    });
+
+    // Б25/Б26/Б27/Б20: инструментарий хранилища.
+    $(doc).on('click.diegetic', '#dg-ext #dg-store-export', async () => {
+        const ok = await deps.exportArtifacts?.();
+        globalThis.toastr?.[ok ? 'success' : 'error'](ok ? tr('Diegetic: storage file downloaded', 'diegetic.toast.storeExported') : tr('Diegetic: storage file unavailable', 'diegetic.toast.storeExportFail'));
+    });
+    $(doc).on('click.diegetic', '#dg-ext #dg-store-import', () => { doc.getElementById('dg-store-import-file')?.click(); });
+    $(doc).on('change.diegetic', '#dg-ext #dg-store-import-file', async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        try {
+            const res = await deps.importArtifacts?.(await file.text());
+            if (res?.ok) {
+                globalThis.toastr?.success(tr('Diegetic: import done — added: {added}, updated: {updated}', 'diegetic.toast.importDone')
+                    .replace('{added}', res.added).replace('{updated}', res.updated));
+                renderArtifactList();
+            } else {
+                globalThis.toastr?.error(tr('Diegetic: import failed — {error}', 'diegetic.toast.importFail').replace('{error}', res?.error ?? ''));
+            }
+        } catch (err) {
+            globalThis.toastr?.error(tr('Diegetic: file could not be read ({error})', 'diegetic.toast.importReadFail').replace('{error}', err?.message ?? err));
+        }
+    });
+    $(doc).on('click.diegetic', '#dg-ext #dg-store-gc', () => {
+        const removed = deps.gcStore?.() ?? 0;
+        globalThis.toastr?.success(removed
+            ? tr('Diegetic: orphaned entries removed: {n}', 'diegetic.toast.gcDone').replace('{n}', removed)
+            : tr('Diegetic: no orphaned entries', 'diegetic.toast.gcEmpty'));
+        renderArtifactList();
+    });
+    $(doc).on('click.diegetic', '#dg-ext #dg-store-detach', async () => {
+        const ok = deps.confirmDanger
+            ? await deps.confirmDanger(tr('Detach storage? Current artifacts will be copied into a new file of this chat; forks and the parent keep their own copy.', 'diegetic.confirm.detach'))
+            : true;
+        if (!ok) return;
+        if (deps.detachStore?.()) {
+            globalThis.toastr?.success(tr('Diegetic: storage detached — entries copied to a new file', 'diegetic.toast.detached'));
+            renderArtifactList();
+        }
+    });
+    $(doc).on('click.diegetic', '#dg-ext #dg-store-retry', () => { deps.retryStore?.(); });
 
     // Список артефактов: 👁 открыть, ⤓ файл, ⟳ — регенерация всего поста,
     // ✕ — удалить один артефакт.
@@ -952,7 +1117,10 @@ export function unmountUi(deps) {
     disconnectLauncherObserver();
     disconnectUrisBridgeListener();
     if (_fabResizeBound) {
-        try { globalThis.window?.removeEventListener?.('resize', onFabResize); } catch { /* ок */ }
+        try {
+            globalThis.window?.removeEventListener?.('resize', onFabResize);
+            globalThis.visualViewport?.removeEventListener?.('resize', onFabResize);
+        } catch { /* ок */ }
         _fabResizeBound = false;
     }
     for (const id of ['dg-style-native', 'dg-ext', 'dg-launcher-bar', 'dg-launcher-fab']) {

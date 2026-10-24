@@ -222,8 +222,8 @@ async function init(isCancelled = () => false) {
             if (extra) {
                 try {
                     const v = JSON.parse(extra);
-                    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('должен быть JSON-объект');
-                } catch (e) { return { ok: false, error: `«Доп. параметры»: ${e.message}` }; }
+                    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(tr('must be a JSON object', 'diegetic.panel.extraBody.mustBeObject'));
+                } catch (e) { return { ok: false, error: tr('«Extra params»: {error}', 'diegetic.panel.extraBody.error').replace('{error}', e.message) }; }
             }
             settings.customExtraBody = extra;
             save();
@@ -291,9 +291,9 @@ async function init(isCancelled = () => false) {
         exportArtifacts: exportStoreFile,
         importArtifacts: async (jsonText) => {
             let doc;
-            try { doc = JSON.parse(jsonText); } catch (e) { return { ok: false, error: `не JSON (${e?.message ?? e})` }; }
+            try { doc = JSON.parse(jsonText); } catch (e) { return { ok: false, error: tr('not JSON ({error})', 'diegetic.store.importNotJson').replace('{error}', e?.message ?? e) }; }
             if (doc?.v !== 2 || !doc.entries || typeof doc.entries !== 'object') {
-                return { ok: false, error: 'это не файл хранилища Diegetic (ожидался v:2)' };
+                return { ok: false, error: tr('this is not a Diegetic storage file (expected v:2)', 'diegetic.store.importNotStoreFile') };
             }
             const res = mergeEntries(doc.entries);
             reconcile();

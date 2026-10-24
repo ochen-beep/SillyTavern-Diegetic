@@ -233,11 +233,11 @@ export async function urisStatus({ waitMs = BRIDGE_WAIT_MS, pollMs = BRIDGE_POLL
  */
 export async function generateSlotImage(slot, { quality = 'medium', imageSize = '1K', signal, onStatus } = {}) {
     const b = getUrisBridge();
-    if (!b) throw new Error('UR Image Studio не найден: расширение не установлено или выключено');
+    if (!b) throw new Error(tr('UR Image Studio not found — the extension is not installed or disabled', 'diegetic.photo.noBridge'));
     await b.ready;
     const req = { prompt: slot.desc, imageSize, quality, useSceneRefs: true };
     if (slot.trigger) req.trigger = slot.trigger;
     const res = await b.generate(req, { caller: BRIDGE_CALLER, signal, onStatus });
-    if (!res?.imagePath) throw new Error('URIS вернул ответ без imagePath');
+    if (!res?.imagePath) throw new Error(tr('URIS returned a reply without imagePath', 'diegetic.photo.noImagePath'));
     return res;
 }

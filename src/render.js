@@ -259,12 +259,12 @@ const SLOT_CTL_CSS = '<style>'
 const LEGACY_CTL_RE = /<span class="dg-slot-regen"[^>]*>[^<]*<\/span>/g;
 
 const slotControls = (ordinal, state) =>
-    `<span class="dg-slot-ctl dg-slot-edit" data-dg-cmd="slot-edit" data-ordinal="${ordinal}" title="Промпт фото">✎</span>`
+    `<span class="dg-slot-ctl dg-slot-edit" data-dg-cmd="slot-edit" data-ordinal="${ordinal}" title="${tr('Photo prompt', 'diegetic.slot.titlePrompt')}">✎</span>`
     // Во время заливки ⟳ превращается в ⏹: клик отменяет генерацию (abortKind
     // 'fill'), после аборта слот откатится в pending и контролы вернутся к ⟳.
     + (state === 'loading'
-        ? `<span class="dg-slot-ctl dg-slot-cancel" data-dg-cmd="slot-cancel" data-ordinal="${ordinal}" title="Отменить генерацию фото">⏹</span>`
-        : `<span class="dg-slot-ctl dg-slot-regen" data-dg-cmd="slot-regen" data-ordinal="${ordinal}" title="Перегенерировать фото">⟳</span>`);
+        ? `<span class="dg-slot-ctl dg-slot-cancel" data-dg-cmd="slot-cancel" data-ordinal="${ordinal}" title="${tr('Cancel photo generation', 'diegetic.slot.titleCancel')}">⏹</span>`
+        : `<span class="dg-slot-ctl dg-slot-regen" data-dg-cmd="slot-regen" data-ordinal="${ordinal}" title="${tr('Regenerate photo', 'diegetic.slot.titleRegen')}">⟳</span>`);
 
 /** Дорисовать контролы каждому фотослоту (сразу после открывающего тега слота). */
 export function withSlotControls(html) {

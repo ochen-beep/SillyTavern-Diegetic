@@ -344,7 +344,7 @@ test('поздний ответ старого прогона не затира�
     await createPipeline(deps).run(0);
     const p = readVerifiedPayload(msg, 0);
     assert.ok(p?.artifacts[0].html.includes('<body>fresh</body>'), 'свежий payload цел');
-    assert.ok(notifications.some(([k, m]) => k === 'warn' && /не записан/.test(m)));
+    assert.ok(notifications.some(([k, m]) => k === 'warn' && /не записан|not recorded/.test(m)));
 });
 
 test('прогон ключуется dg_id: отмена по свежему индексу находит, по сместившемуся индексу — нет', async () => {

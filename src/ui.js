@@ -245,7 +245,7 @@ export function artifactListHtml(rows) {
         return `<div class="dg-art-row" data-msg="${Number(a.msgId)}" data-art="${esc(a.id)}">`
             + `<span class="dg-art-status" style="color:${st.color}" title="${esc(st.label())}">●</span>`
             + `<span class="dg-art-type" data-art-open title="${tr('Preview', 'diegetic.panel.preview')}">${esc(a.type || 'artifact')}</span>`
-            + `<span class="dg-art-meta">пост #${Number(a.msgId)}${date ? ` · ${date}` : ''}</span>`
+            + `<span class="dg-art-meta">${tr('post #{n}', 'diegetic.panel.postRef').replace('{n}', Number(a.msgId))}${date ? ` · ${date}` : ''}</span>`
             + `<button type="button" class="dg-art-btn" data-art-open title="${tr('Open in a popup', 'diegetic.panel.openPopup')}">👁</button>`
             + `<button type="button" class="dg-art-btn" data-art-save title="${tr('Save as .html', 'diegetic.panel.saveFile')}">⤓</button>`
             + `<button type="button" class="dg-art-btn" data-art-regen title="${tr('Regenerate post artifacts', 'diegetic.panel.regenPost')}">⟳</button>`
@@ -744,7 +744,7 @@ export function mountPanel(deps) {
     const fillCustomKeyField = () => {
         const el = doc.getElementById('dg-key');
         if (!el || !deps.getCustomKey) return;
-        deps.getCustomKey().then((k) => { if (el.isConnected && !el.value) el.placeholder = k ? 'сохранён — введи для замены' : 'sk-… (хранится в браузере)'; }).catch(() => {});
+        deps.getCustomKey().then((k) => { if (el.isConnected && !el.value) el.placeholder = k ? tr('saved — type to replace', 'diegetic.panel.source.keySaved') : `sk-… (${tr('stored in the browser', 'diegetic.panel.source.keyStoredIn')})`; }).catch(() => {});
     };
 
     // ── Редактор шаблонов: список + edit-on-place ──
@@ -790,7 +790,7 @@ export function mountPanel(deps) {
             dangling = true;
             const missing = doc.createElement('option');
             missing.value = cur;
-            missing.textContent = `${cur} · нет текста`;
+            missing.textContent = tr('{name} · no text', 'diegetic.panel.template.noText').replace('{name}', cur);
             select.appendChild(missing);
             select.value = cur;
         }
@@ -799,7 +799,7 @@ export function mountPanel(deps) {
         if (textarea) {
             const draft = (!dangling && _tplDraft != null && select.value === cur) ? _tplDraft : null;
             textarea.value = draft ?? (dangling
-                ? `Шаблон «${cur}» пока недоступен. Выбор сохранён; текст появится, когда шаблон существует.`
+                ? tr('Template «{name}» is not available yet. The selection is kept; the text will appear when the template exists.', 'diegetic.panel.template.dangling').replace('{name}', cur)
                 : String(content ?? ''));
             textarea.disabled = dangling;
         }

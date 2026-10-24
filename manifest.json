@@ -9,7 +9,8 @@
     "auto_update": false,
     "minimum_client_version": "1.19.0",
     "i18n": {
-        "ru-ru": "src/i18n/ru-ru.json"
+        "ru-ru": "src/i18n/ru-ru.json",
+        "ru": "src/i18n/ru-ru.json"
     },
     "hooks": {
         "activate": "onActivate",

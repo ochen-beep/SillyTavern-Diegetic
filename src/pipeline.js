@@ -146,7 +146,7 @@ export function createPipeline(deps) {
             if (!live || dgMessageId(live) !== runDgId) live = deps.getMessageByDgId?.(runDgId) ?? null;
             if (!live) {
                 console.info('[Diegetic] ответ не записан: пост исчез за время генерации');
-                notify.warn?.('Diegetic: ответ не записан — пост исчез за время генерации');
+                notify.warn?.(tr('Diegetic: reply not recorded — the post disappeared while generating', 'diegetic.toast.notRecordedGone'));
                 return;
             }
             const liveDigest = digestForVariant(live, swipeIdx);
@@ -155,7 +155,7 @@ export function createPipeline(deps) {
             const existing = readRawPayload(live, swipeIdx);
             if (existing && liveDigest === existing.contentDigest && liveDigest !== proseDigest) {
                 console.info('[Diegetic] ответ не записан: у поста уже есть свежие артефакты');
-                notify.warn?.('Diegetic: ответ не записан — пост уже обзавёлся свежими артефактами');
+                notify.warn?.(tr('Diegetic: reply not recorded — the post already has fresh artifacts', 'diegetic.toast.notRecordedFresh'));
                 return;
             }
             const payload = stampPayload(live, swipeIdx, recorded, { digest: proseDigest });

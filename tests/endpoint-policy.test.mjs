@@ -1,6 +1,5 @@
-// tests/endpoint-policy.test.mjs — политика кастомного эндпоинта
-// (форма HTML-Inserts endpoint-policy.test.mjs): нормализация, userinfo,
-// plain-HTTP и allowlist по origin.
+// tests/endpoint-policy.test.mjs — политика кастомного эндпоинта:
+// нормализация, userinfo, plain-HTTP и allowlist по origin.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyEndpoint, isOriginAllowed, addToAllowList } from '../src/endpoint-policy.js';

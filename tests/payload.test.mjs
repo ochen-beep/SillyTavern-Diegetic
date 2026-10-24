@@ -44,7 +44,7 @@ test('stamp→write→readVerified: roundtrip, запись под dg_id:сло�
 
 test('ключ стабилен при регенерации свайпа/continue: send_date переставлена — пейлоад жив', () => {
     // Регрессия: ST переставляет send_date при регенерации текущего свайпа и
-    // continue (script.js:6679/6704) — адресация по дате теряла пейлоад.
+    // continue — адресация по дате теряла пейлоад (см. payload.js).
     const msg = makeMsg({ swipes: [TEXT] });
     writePayload(msg, 0, stampPayload(msg, 0, artifacts));
     const stamp = 'October 18, 2026 10:05am';

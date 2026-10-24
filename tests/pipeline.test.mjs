@@ -28,7 +28,7 @@ function makeDeps({ raw = RESP, isUser = false, message = PROSE, failGen = false
         notifyRender: () => { rendered++; },
         // Автогенерация включена явно: дефолт настроек теперь — выключена.
         settings: { ...DEFAULT_SETTINGS, enabled: true },
-        // Дескриптор источника хост собирает из настроек (форма DS-Comments).
+        // Дескриптор источника хост собирает из настроек.
         getSourceProfile: () => ({ id: 'source', name: 'Источник', source: 'current', sourceConfig: null }),
         coordinator: createGenerationCoordinator(),
         notify: { ready: (n) => notifications.push(['ready', n]), error: (m) => notifications.push(['error', m]) },

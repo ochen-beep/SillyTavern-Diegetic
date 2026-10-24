@@ -1,5 +1,5 @@
 // @ts-check
-/** Shared exact-normalized anchor matching policy. */
+/** Общая политика точного матча якоря по нормализованному тексту. */
 
 function normalizeChar(ch) {
     return ch
@@ -29,16 +29,16 @@ export function isWordChar(ch) {
 }
 
 /**
- * Grapheme-aware normalization with a position map back into the source
- * string. Shared by the flat-text matcher and the fuzzy resolver so every
- * surface applies the same normalization policy (NFC, case, quotes/dashes,
- * whitespace collapse) with UTF-16 source spans as the common currency.
+ * Нормализация с учётом графем и картой позиций обратно в исходную строку.
+ * Общая для плоского матчера и fuzzy-резолвера: все поверхности применяют
+ * одну политику нормализации (NFC, регистр, кавычки/тире, схлопывание
+ * пробелов), а общая валюта — UTF-16-спаны исходника.
  */
 export function normalizedWithMap(value) {
     const source = String(value ?? '');
     const pieces = [];
     let segmenter;
-    try { segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' }); } catch { /* older engine */ }
+    try { segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' }); } catch { /* старый движок */ }
     if (segmenter) {
         for (const part of segmenter.segment(source)) pieces.push({ text: part.segment, start: part.index, end: part.index + part.segment.length });
     } else {
@@ -57,7 +57,8 @@ export function normalizedWithMap(value) {
             units.push({ ch: ' ', start: pendingSpace.start, end: pendingSpace.end });
             pendingSpace = null;
         }
-        // Astral chars expand per code unit so the map aligns with indexOf offsets.
+        // Астральные символы расходятся по code unit'ам — карта совпадает
+        // со смещениями indexOf.
         for (const ch of normalized) {
             for (let u = 0; u < ch.length; u++) units.push({ ch: ch[u], start: part.start, end: part.end });
         }
@@ -65,7 +66,8 @@ export function normalizedWithMap(value) {
     return { source, normalized: units.map(x => x.ch).join(''), map: units };
 }
 
-/** Find the first whole-phrase exact-normalized match and return original text. */
+/** Первый матч фразы целиком (по границам слов) в нормализованном тексте;
+ *  возвращает кусок исходной строки. */
 export function findAnchorInText(text, anchor, fromIndex = 0) {
     const needle = normalizeAnchorKey(anchor);
     if (!needle) return null;
@@ -99,7 +101,7 @@ export function findAllAnchorSpans(text, anchor) {
     }
 }
 
-/** Parse one non-empty target per line, preserving first spelling and order. */
+/** Разобрать по одной непустой цели на строку, сохраняя первое написание и порядок. */
 export function normalizeLineTargets(value, limit = 20) {
     const targets = [];
     const seen = new Set();
@@ -117,7 +119,7 @@ export function normalizeLineTargets(value, limit = 20) {
     return { targets, duplicateCount, truncatedCount };
 }
 
-/** Word-run positions in a space-normalized string. */
+/** Позиции слов в строке, схлопнутой до одинарных пробелов. */
 function tokenizeWords(str) {
     const words = [];
     let i = 0;
@@ -131,7 +133,7 @@ function tokenizeWords(str) {
     return words;
 }
 
-/** Levenshtein distance with an early exit once it exceeds `cap`. */
+/** Расстояние Левенштейна с ранним выходом, как только превышен `cap`. */
 function levenshtein(a, b, cap) {
     if (a === b) return 0;
     if (Math.abs(a.length - b.length) > cap) return cap + 1;
@@ -151,12 +153,12 @@ function levenshtein(a, b, cap) {
 }
 
 /**
- * Word-aligned fuzzy search of `anchor` in `text`. Returns the best
- * whole-word source span ({text, start, end, distance}) or null. Every
- * needle word maps onto one consecutive source word; words ≤ 4 chars must
- * match exactly, longer words tolerate ≤ 34% edit distance, and the total
- * distance is capped at `maxRatio` of the anchor (min 2, so a single
- * inflection suffix survives).
+ * Fuzzy-поиск `anchor` в `text` с выравниванием по словам. Возвращает лучший
+ * исходный спан целых слов ({text, start, end, distance}) или null. Каждое
+ * слово якоря ложится ровно на одно подряд идущее слово источника; слова
+ * ≤ 4 символов обязаны совпасть точно, более длинные терпят ≤ 34% правок,
+ * суммарное расстояние ограничено `maxRatio` от якоря (минимум 2 — чтобы
+ * выжила одна словоизменительная приставка/суффикс).
  */
 export function findFuzzySpan(text, anchor, { maxRatio = 0.25, maxWords = 12 } = {}) {
     const needle = normalizeAnchorKey(anchor);

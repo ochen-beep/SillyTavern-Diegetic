@@ -20,9 +20,12 @@ const warn = (...a) => console.warn('[Diegetic]', ...a);
 
 let _mirror = null;            // { entries: { [sendDate]: payload } } | null до загрузки
 let _pending = null;           // записи до первой загрузки: { key: payload|null }
-let _writeChain = Promise.resolve();
+let _pendingUploads = [];      // one snapshot per file: a mutation replaces ITS OWN snapshot, foreign ones queue up
+let _uploadJob = null;         // running write loop (null — idle)
 let _warnedNet = false;
+let _unreadable = false;       // base read never settled — blind overwrite is forbidden
 let _rawRemote = null;         // сырое содержимое серверного файла (Б29: бэкап перед перезаписью)
+let _rawRemoteFile = null;     // owner file of _rawRemote: the backup does not survive a chat switch
 let _needsBackup = false;      // файл на сервере не нашей схемы/битый — спасти перед записью
 let _lastError = null;         // последняя ошибка записи (Б20: баннер в панели)
 
@@ -49,7 +52,11 @@ function stHeaders() {
 function b64encode(text) {
     const bytes = new TextEncoder().encode(text);
     let bin = '';
-    for (const b of bytes) bin += String.fromCharCode(b);
+    // Chunked at 0x8000: spreading a chunk keeps the array off the stack,
+    // while per-byte glue adds an iteration for every byte of megabyte files.
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
     return btoa(bin);
 }
 
@@ -57,10 +64,12 @@ function b64encode(text) {
 export async function loadStore() {
     const mirror = _mirror = { entries: {} };
     const name = fileName();
+    let loaded = false; // 404 / valid v2 / foreign schema — the file's existence is settled
     if (name) {
         try {
             const res = await fetch(`/user/files/${encodeURIComponent(name)}`, { headers: stHeaders() });
             if (res.ok) {
+                loaded = true;
                 const raw = await res.text();
                 let doc = null;
                 try { doc = JSON.parse(raw); } catch { doc = null; }
@@ -70,21 +79,29 @@ export async function loadStore() {
                     if (_mirror === mirror) mirror.entries = { ...doc.entries, ...mirror.entries };
                     _needsBackup = false;
                     _rawRemote = null;
+                    _rawRemoteFile = null;
                 } else if (raw.trim()) {
                     // Б29: файл не нашей схемы (v:3 из будущего) или битый JSON.
                     // Раньше молча читали как пустое зеркало — и следующая запись
                     // затирала его навсегда. Теперь: сырое содержимое бэкапится
                     // на сервер перед первой перезаписью.
                     _rawRemote = raw;
+                    _rawRemoteFile = name;
                     _needsBackup = true;
                     warn(`store: файл на сервере не нашей схемы (v=${doc?.v ?? 'битый JSON'}) — перед первой записью сохраним резервную копию`);
                 }
             }
             // 404 = первый запуск на этом чате — пустое зеркало, не ошибка.
+            if (res.status === 404) loaded = true;
         } catch (e) {
             if (!_warnedNet) { _warnedNet = true; warn('store: файл недоступен, артефакты живут до перезагрузки:', e); }
         }
     }
+    // A non-404 read refusal means the file's existence is unproven. The empty
+    // mirror may not reflect the real content: a blind write would wipe every
+    // artifact. writeStep settles it with a control read before sending:
+    // 404 — write, valid — merge, still unreadable — defer (pending survives).
+    _unreadable = !loaded;
     if (_pending) {
         for (const [k, v] of Object.entries(_pending)) {
             if (v === null) delete _mirror.entries[k]; else _mirror.entries[k] = v;
@@ -142,26 +159,97 @@ function scheduleWrite() {
     // upload исполняется позже и без снапшота прочитал бы уже СМЕНИВШЕЕСЯ
     // зеркало (CHAT_CHANGED) и имя чужого чата — коммит текущего потерялся бы.
     const name = fileName();
-    const body = _mirror ? JSON.stringify({ v: 2, entries: _mirror.entries }) : null;
-    _writeChain = _writeChain.then(() => upload(name, body)).catch((e) => {
-        _lastError = String(e?.message || e);
-        warn('store: запись:', e);
-    });
+    if (!name || !_mirror) return;
+    // The backup state travels with the snapshot and only alongside its owner
+    // file — a chat switch between schedule and upload must not carry the raw
+    // content of a foreign file into the new one's backup.
+    const backup = (_needsBackup && _rawRemote && _rawRemoteFile === name)
+        ? { name: name.replace(/\.json$/, '') + '.backup.json', raw: _rawRemote, origin: name }
+        : null;
+    _needsBackup = false;
+    _rawRemote = null;
+    _rawRemoteFile = null;
+    // One snapshot per file: mutations that land while an upload is in flight
+    // coalesce into the next loop iteration (one upload per burst instead of
+    // one per mutation). A foreign file's snapshot is untouched — its commit
+    // has not landed yet and that chat's mirror is already gone from here.
+    const snap = { name, body: JSON.stringify({ v: 2, entries: _mirror.entries }), backup };
+    const idx = _pendingUploads.findIndex((s) => s.name === name);
+    if (idx >= 0) _pendingUploads[idx] = snap;
+    else _pendingUploads.push(snap);
+    if (!_uploadJob) _uploadJob = runUploadLoop();
 }
 
-async function upload(name, body) {
-    if (!name || !body) return;
-    // Б29: перед первой перезаписью чужого/битого файла — его резервная копия.
-    if (_needsBackup && _rawRemote) {
-        const bakName = name.replace(/\.json$/, '') + '.backup.json';
+/** Write loop: sends queued snapshots in order. An error or a failed control
+ *  read leaves the snapshot queued — retried by the next mutation or
+ *  retryWrite (the panel banner). */
+async function runUploadLoop() {
+    try {
+        while (_pendingUploads.length) {
+            const snap = _pendingUploads[0];
+            try {
+                const sent = await writeStep(snap);
+                if (sent) {
+                    _lastError = null;
+                    const idx = _pendingUploads.indexOf(snap);
+                    if (idx >= 0) _pendingUploads.splice(idx, 1);
+                } else {
+                    // The file's existence is still unproven — the write is
+                    // deferred; the panel banner shows the status and a retry.
+                    _lastError = 'file unreadable — write deferred until the server answers';
+                    break;
+                }
+            } catch (e) {
+                _lastError = String(e?.message || e);
+                warn('store: запись:', e);
+                break;
+            }
+        }
+    } finally { _uploadJob = null; }
+}
+
+/**
+ * One attempt to send a snapshot. true — uploaded; false — deferred: the base
+ * read never settled and the control read could not prove the file either
+ * absent or readable. A blind write here would wipe every artifact of the
+ * chat: an empty mirror is not a proven-empty file.
+ */
+async function writeStep(snap) {
+    let { name, body, backup } = snap;
+    if (_unreadable) {
+        let res = null;
+        try { res = await fetch(`/user/files/${encodeURIComponent(name)}`, { headers: stHeaders() }); } catch { /* ниже */ }
+        if (!res || (!res.ok && res.status !== 404)) return false;
+        if (res.ok) {
+            const raw = await res.text();
+            let doc = null;
+            try { doc = JSON.parse(raw); } catch { doc = null; }
+            if (doc?.v === 2 && doc.entries && typeof doc.entries === 'object') {
+                // The file reads and is valid: server entries merge into the
+                // snapshot (local ones are newer) — nothing is lost.
+                body = JSON.stringify({ v: 2, entries: { ...doc.entries, ...JSON.parse(body).entries } });
+            } else if (raw.trim()) {
+                // Foreign schema / corrupt — the snapshot gets a backup of it.
+                backup = { name: name.replace(/\.json$/, '') + '.backup.json', raw, origin: name };
+            }
+        } // 404 — the base really was empty, write as is
+        _unreadable = false;
+    }
+    // Before the first overwrite of a foreign-schema/corrupt file — back it up.
+    if (backup) {
         try {
             const resBak = await fetch('/api/files/upload', {
                 method: 'POST',
                 headers: stHeaders(),
-                body: JSON.stringify({ name: bakName, data: b64encode(_rawRemote) }),
+                body: JSON.stringify({ name: backup.name, data: b64encode(backup.raw) }),
             });
-            if (resBak.ok) { _needsBackup = false; _rawRemote = null; }
+            if (resBak.ok) backup = null;
         } catch { /* бэкап не удался — ещё попытка при следующей записи */ }
+        if (backup && !_needsBackup && !_rawRemote) {
+            _needsBackup = true;
+            _rawRemote = backup.raw;
+            _rawRemoteFile = backup.origin;
+        }
     }
     const res = await fetch('/api/files/upload', {
         method: 'POST',
@@ -169,7 +257,7 @@ async function upload(name, body) {
         body: JSON.stringify({ name, data: b64encode(body) }),
     });
     if (!res.ok) throw new Error(`upload ${res.status}`);
-    _lastError = null;
+    return true;
 }
 
 /** Состояние записи для панели (Б20): ok — последняя запись прошла. */
@@ -248,6 +336,8 @@ export async function deleteStoreFile() {
     const name = fileName();
     _mirror = null;
     _pending = null;
+    _pendingUploads = [];
+    _unreadable = false;
     if (!name) return;
     try {
         await fetch('/api/files/delete', {
@@ -306,8 +396,11 @@ export function migrateExtraToStore() {
 export function _testSetEntries(entries) {
     _mirror = entries === null ? null : { entries: entries ?? {} };
     _pending = null;
-    _writeChain = Promise.resolve();
+    _pendingUploads = [];
+    _uploadJob = null;
     _lastError = null;
+    _unreadable = false;
     _needsBackup = false;
     _rawRemote = null;
+    _rawRemoteFile = null;
 }

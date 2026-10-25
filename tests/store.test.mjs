@@ -137,10 +137,127 @@ test('writeEntry до загрузки — в pending, после loadStore пр
     assert.equal(readEntry('k').contentDigest, 'p', 'pending применился после загрузки');
 });
 
+test('a corrupt-file backup never travels into another chat file', async () => {
+    // Chat A loaded a non-v2 file (backup state) and its backup POST failed;
+    // after switching to chat B, a write there must not drag A's raw content
+    // into dg_B.backup.json.
+    const uploads = [];
+    const realFetch = globalThis.fetch;
+    let backupFails = true;
+    globalThis.fetch = async (url, opts = {}) => {
+        if (String(url).includes('/api/files/upload')) {
+            const raw = JSON.parse(opts.body);
+            uploads.push([raw.name, Buffer.from(raw.data, 'base64').toString()]);
+            if (raw.name.endsWith('.backup.json') && backupFails) return { ok: false };
+            return { ok: true };
+        }
+        return { ok: true, text: async () => 'not our schema' };
+    };
+    try {
+        _testSetEntries(null);
+        mockCtx([{ mes: 't' }], 'store-A');
+        await loadStore();                 // server returned non-v2 → backup marked (file A)
+        writeEntry('k', P('x'));           // snapshot takes the backup; upload fails → state returns
+        await new Promise((r) => setTimeout(r, 10));
+        mockCtx([{ mes: 't' }], 'store-B'); // CHAT_CHANGED
+        writeEntry('k2', P('y'));          // owner is file A: the backup is not taken along
+        await new Promise((r) => setTimeout(r, 10));
+        const baks = uploads.filter(([n]) => n.endsWith('.backup.json'));
+        assert.ok(baks.every(([n]) => n === 'dg_store-A.backup.json'), 'backups of the owner file A only');
+        assert.ok(uploads.some(([n]) => n === 'dg_store-B.json'), 'chat B wrote under its own file');
+    } finally { globalThis.fetch = realFetch; }
+});
+
 test('deleteEntry остаётся рабочим для clearPayload-пути', () => {
     _testSetEntries({ k: P('x') });
     deleteEntry('k');
     assert.equal(readEntry('k'), null);
+});
+
+// ── a failed load forbids the blind overwrite ──
+
+test('read 500 defers writes; a control 404 proves the empty base', async () => {
+    const uploads = [];
+    const realFetch = globalThis.fetch;
+    let state = 'down'; // down | missing
+    globalThis.fetch = async (url, opts = {}) => {
+        if (String(url).includes('/api/files/upload')) {
+            uploads.push(JSON.parse(Buffer.from(JSON.parse(opts.body).data, 'base64').toString()));
+            return { ok: true };
+        }
+        if (state === 'down') return { ok: false, status: 500 };
+        return { ok: false, status: 404 };
+    };
+    try {
+        _testSetEntries(null);
+        mockCtx([{ mes: 't' }]);
+        await loadStore();            // server said 500 — file existence unproven
+        writeEntry('local', P('x'));
+        await new Promise((r) => setTimeout(r, 10));
+        assert.equal(uploads.length, 0, 'слепой перезаписи нет');
+        assert.equal(storeStatus().ok, false, 'панель видит отложенную запись');
+
+        state = 'missing';
+        retryWrite();                 // control read: 404 — the base was empty
+        await new Promise((r) => setTimeout(r, 10));
+        assert.equal(uploads.length, 1, 'запись прошла после доказательства');
+        assert.ok(uploads[0].entries.local, 'локальная запись в теле');
+    } finally { globalThis.fetch = realFetch; }
+});
+
+test('control read finds a valid file — server entries merge, not wipe', async () => {
+    const uploads = [];
+    const realFetch = globalThis.fetch;
+    let up = false;
+    globalThis.fetch = async (url, opts = {}) => {
+        if (String(url).includes('/api/files/upload')) {
+            uploads.push(JSON.parse(Buffer.from(JSON.parse(opts.body).data, 'base64').toString()));
+            return { ok: true };
+        }
+        if (!up) throw new Error('network down');
+        return { ok: true, text: async () => JSON.stringify({ v: 2, entries: { srv: P('server') } }) };
+    };
+    try {
+        _testSetEntries(null);
+        mockCtx([{ mes: 't' }]);
+        await loadStore();            // network died on the base read
+        writeEntry('local', P('x'));
+        await new Promise((r) => setTimeout(r, 10));
+        assert.equal(uploads.length, 0, 'отложено');
+
+        up = true;
+        retryWrite();                 // file reads and is valid → merge instead of wipe
+        await new Promise((r) => setTimeout(r, 10));
+        assert.equal(uploads.length, 1);
+        assert.ok(uploads[0].entries.srv, 'серверная запись выжила');
+        assert.ok(uploads[0].entries.local, 'локальная запись доехала');
+    } finally { globalThis.fetch = realFetch; }
+});
+
+test('a mutation burst during upload coalesces into one file upload', async () => {
+    const uploads = [];
+    const realFetch = globalThis.fetch;
+    let gateOpen = false;
+    globalThis.fetch = async (url, opts = {}) => {
+        if (String(url).includes('/api/files/upload')) {
+            uploads.push(JSON.parse(Buffer.from(JSON.parse(opts.body).data, 'base64').toString()));
+            if (!gateOpen) { gateOpen = true; await new Promise((r) => setTimeout(r, 5)); } // first upload in flight
+            return { ok: true };
+        }
+        return { ok: false, status: 404 };
+    };
+    try {
+        _testSetEntries(null);
+        mockCtx([{ mes: 't' }]);
+        await loadStore();            // 404 → clean base
+        writeEntry('a', P('1'));
+        writeEntry('b', P('2'));
+        writeEntry('c', P('3'));      // all three — while upload 'a' is in flight
+        await new Promise((r) => setTimeout(r, 30));
+        assert.ok(uploads.length <= 2, `схлопнулось (upload'ов: ${uploads.length}), а не по одной на мутацию`);
+        const last = uploads[uploads.length - 1];
+        assert.ok(last.entries.a && last.entries.b && last.entries.c, 'финальная загрузка несёт все записи');
+    } finally { globalThis.fetch = realFetch; }
 });
 
 // ── Б25/Б26/Б27/Б20: инструментарий хранилища ──
@@ -197,4 +314,25 @@ test('Б20: storeStatus отражает последнюю ошибку зап�
     assert.deepEqual(storeStatus(), { ok: true, error: null });
     retryWrite();
     assert.equal(storeStatus().ok, true);
+});
+
+test('chunked b64: a 70 KB body reaches the upload without loss', async () => {
+    const uploads = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+        if (String(url).includes('/api/files/upload')) {
+            uploads.push(JSON.parse(Buffer.from(JSON.parse(opts.body).data, 'base64').toString()));
+            return { ok: true };
+        }
+        return { ok: false, status: 404 };
+    };
+    try {
+        _testSetEntries(null);
+        mockCtx([{ mes: 't' }]);
+        await loadStore();
+        const big = 'y'.repeat(70_000); // > 2×0x8000 — crosses chunk boundaries
+        writeEntry('big', { ...P('d'), artifacts: [{ html: big }] });
+        await new Promise((r) => setTimeout(r, 10));
+        assert.equal(uploads[0].entries.big.artifacts[0].html, big, '70 КБ через чанки без потерь');
+    } finally { globalThis.fetch = realFetch; }
 });

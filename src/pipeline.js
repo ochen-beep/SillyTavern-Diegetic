@@ -62,6 +62,10 @@ export function createPipeline(deps) {
 
         // Прогон ключуется стабильным dg_id, не индексом mesid (см. payload.js);
         // тот же dg_id — идентичность поста для коммита, который ищет его по dg_id.
+        // The chat file changes only when a dg_id is CREATED: remember that
+        // before beginRun (it creates the id up front) — full chat save then
+        // happens once, not per store write.
+        const dgExisted = !!msg.extra?.dg_id;
         const runDgId = dgMessageId(msg, { create: true });
         const run = deps.coordinator.beginRun(runDgId);
         try {
@@ -166,7 +170,9 @@ export function createPipeline(deps) {
             // Перезапись существующего payload'а — обратима в течение окна (Б24):
             // прежние артефакты прячутся, тост успеха получает «Отменить».
             const undo = existing ? stashForUndo(live, swipeIdx, existing) : null;
-            await deps.persistChat();
+            // The store persists itself; save the chat only when we changed it
+            // (created the dg_id) — afterwards ST saves it with the message.
+            if (!dgExisted) await deps.persistChat();
             deps.notifyRender?.(messageId);
 
             const drifted = liveDigest !== proseDigest;
@@ -184,7 +190,6 @@ export function createPipeline(deps) {
                         timeOut: 10_000,
                         onclick: () => {
                             if (undo()) {
-                                void deps.persistChat?.();
                                 deps.notifyRender?.(messageId);
                                 notify.ready(tr('Diegetic: regeneration undone — previous artifacts restored', 'diegetic.toast.regenUndone'));
                             }
@@ -214,6 +219,8 @@ export function createPipeline(deps) {
         if (s.imageMode === 'off') return;
         const msg0 = deps.getMessage(messageId);
         if (!msg0) return;
+        // As in _run: the chat is saved only for creating the dg_id.
+        const dgExisted = !!msg0.extra?.dg_id;
         const run = deps.coordinator.beginRun(dgMessageId(msg0, { create: true }), 'fill');
         try {
             const read = () => {
@@ -224,7 +231,7 @@ export function createPipeline(deps) {
             const write = (payload) => {
                 const m = deps.getMessage(messageId);
                 if (!m || !writePayload(m, m.swipe_id ?? 0, payload)) return false;
-                deps.persistChat();
+                if (!dgExisted) deps.persistChat();
                 deps.notifyRender?.(messageId);
                 return true;
             };
@@ -313,7 +320,7 @@ export function createPipeline(deps) {
         const artifacts = p.artifacts.slice();
         artifacts[idx] = { ...p.artifacts[idx], html: nextHtml, bytes: byteLength(nextHtml) };
         if (!writePayload(msg, swipeIdx, { ...p, artifacts })) return;
-        await deps.persistChat();
+        // The chat is unchanged (the dg_id already exists) — no persist.
         deps.notifyRender?.(messageId);
         if (regenerate && s.imageMode !== 'off') {
             await _fillImageSlots(messageId, {

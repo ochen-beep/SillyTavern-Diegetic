@@ -2,6 +2,8 @@
 // Чистая часть — парсинг и строковая хирургия; обёртка над мостом URIS
 // (globalThis.URIS — то же окно) — в конце файла.
 
+import { tr } from './i18n.js';
+
 export const SLOT_ATTR = 'data-dg-img';
 export const SLOT_STATE_ATTR = 'data-dg-img-state';
 export const SLOT_IMG_CLASS = 'dg-slot-img';
@@ -234,7 +236,16 @@ export async function urisStatus({ waitMs = BRIDGE_WAIT_MS, pollMs = BRIDGE_POLL
 export async function generateSlotImage(slot, { quality = 'medium', imageSize = '1K', signal, onStatus } = {}) {
     const b = getUrisBridge();
     if (!b) throw new Error(tr('UR Image Studio not found — the extension is not installed or disabled', 'diegetic.photo.noBridge'));
-    await b.ready;
+    // Bridge ready without a timeout parked the slot fill forever on a
+    // half-dead bridge (urisStatus races with one); the abort signal never
+    // reaches this await, so a cancel click could not lift it.
+    await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(tr('URIS bridge is not ready (3 s timeout)', 'diegetic.photo.bridgeNotReady'))), 3000);
+        Promise.resolve(b.ready).then(
+            () => { clearTimeout(timer); resolve(); },
+            (e) => { clearTimeout(timer); reject(e); },
+        );
+    });
     const req = { prompt: slot.desc, imageSize, quality, useSceneRefs: true };
     if (slot.trigger) req.trigger = slot.trigger;
     const res = await b.generate(req, { caller: BRIDGE_CALLER, signal, onStatus });

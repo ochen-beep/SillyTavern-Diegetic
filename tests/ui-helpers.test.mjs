@@ -1,7 +1,7 @@
 // tests/ui-helpers.test.mjs — панельные хелперы: collectRows, artifactListHtml, esc.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { collectRows, esc } from '../src/ui.js';
+import { collectRows, esc, allowListHtml } from '../src/ui.js';
 import { stampPayload, writePayload } from '../src/payload.js';
 import { _testSetEntries } from '../src/store.js';
 
@@ -38,4 +38,13 @@ test('collectRows: чужие/пустые сообщения пропускаю
 
 test('esc: экранирует &<>"\'', () => {
     assert.equal(esc('<img src=x onerror=1>&"\''), '&lt;img src=x onerror=1&gt;&amp;&quot;&#39;');
+});
+
+test('allowListHtml: empty list stays empty, origin addressed and escaped', () => {
+    assert.equal(allowListHtml([]), '');
+    assert.equal(allowListHtml(null), '');
+    const html = allowListHtml(['http://192.168.1.5:5000', 'http://<x&">:1']);
+    assert.ok(html.includes('data-allow-del="http://192.168.1.5:5000"'), 'delete button addresses the origin');
+    assert.ok(!html.includes('<x&'), 'origin экранирован');
+    assert.equal((html.match(/data-allow-del/g) || []).length, 2, 'по строке на origin');
 });

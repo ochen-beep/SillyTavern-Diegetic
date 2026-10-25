@@ -33,6 +33,7 @@ import { collectContext } from './src/context.js';
 import { stripReasoning } from './src/contract.js';
 import { tr } from './src/i18n.js';
 import { classifyEndpoint, isOriginAllowed, addToAllowList } from './src/endpoint-policy.js';
+import { clearStash } from './src/undo.js';
 
 const log = (...a) => console.log('[Diegetic]', ...a);
 const warn = (...a) => console.warn('[Diegetic]', ...a);
@@ -215,6 +216,12 @@ async function init(isCancelled = () => false) {
             settings.custom = { apiurl: String(apiurl ?? '').trim(), model: String(model ?? '').trim() };
             save();
             return { ok: true };
+        },
+        // Allowlist of plain-HTTP origins: visible and removable from the panel.
+        getAllowList: () => settings.httpAllowList,
+        removeAllowOrigin: (origin) => {
+            settings.httpAllowList = (settings.httpAllowList ?? []).filter((o) => o !== origin);
+            save();
         },
         // Доп. параметры запроса (JSON-объект) — для CM и custom; сохраняется сразу.
         setCustomExtraBody: (extraBody) => {
@@ -444,6 +451,7 @@ function bindEvents(ctx) {
         [t.CHAT_CHANGED, () => {
             coordinator?.invalidateAll();
             clearImageCache(); // кэш data:-URL фото привязан к чату — не тащим в новый
+            clearStash(); // undo window does not survive a chat switch — no cross-chat write
             prepareChat().catch(() => {});
         }],
     ];
@@ -464,6 +472,7 @@ function unbindEvents() {
 
 function cleanup() {
     coordinator?.invalidateAll();
+    clearStash(); // a late «Undo» click must not write into storage after disable
     unbindEvents();
     document.removeEventListener('visibilitychange', onVisibilityHidden);
     try { unmountUi({ $: globalThis.jQuery ?? globalThis.$ }); } catch (e) { warn('ui cleanup:', e); }

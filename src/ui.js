@@ -254,6 +254,15 @@ export function artifactListHtml(rows) {
     }).join('');
 }
 
+/** Pure: rows of the plain-HTTP origin allowlist. '' — the list is empty. */
+export function allowListHtml(list) {
+    const origins = (Array.isArray(list) ? list : []).map((o) => String(o ?? '')).filter(Boolean);
+    if (!origins.length) return '';
+    return `<label>${tr('Allowed plain-HTTP origins', 'diegetic.panel.source.allowlist')}</label>`
+        + origins.map((o) => `<div class="dg-row"><span class="dg-hint" style="margin:0">${esc(o)}</span>`
+            + `<button type="button" class="dg-art-btn" data-allow-del="${esc(o)}" title="${tr('Remove from the allowlist', 'diegetic.panel.source.allowDel')}">✕</button></div>`).join('');
+}
+
 // ── Лаунчер кнопки генерации (режим buttonMode) ──
 
 let _launcherObserver = null;
@@ -635,6 +644,7 @@ export function mountPanel(deps) {
             <input id="dg-key" type="password" class="text_pole" value="" placeholder="sk-… (${tr('stored in the browser', 'diegetic.panel.source.keyStoredIn')})"/>
           </div>
           <div class="dg-btnrow"><button class="menu_button" id="dg-test-source">${tr('Test connection', 'diegetic.panel.source.test')}</button><button class="menu_button dg-btn-primary" id="dg-save-source">${tr('Apply', 'diegetic.panel.source.apply')}</button></div>
+          <div id="dg-allowlist" class="dg-fields"></div>
         </div>
         <div class="dg-row"><label for="dg-extrabody">${tr('Extra request params (JSON)', 'diegetic.panel.extraBody')}</label>
           <input id="dg-extrabody" type="text" class="text_pole" value="${esc(deps.getCustom().extraBody)}" placeholder='{"reasoning_effort":"none"}' style="min-width:230px"/></div>
@@ -705,6 +715,7 @@ export function mountPanel(deps) {
             syncTemplateEditor();
             syncSourceSection();
             fillCustomKeyField();
+            renderAllowList();
             renderArtifactList();
             ensureLauncher(deps.settings().buttonMode, deps.runLatest);
         };
@@ -745,6 +756,11 @@ export function mountPanel(deps) {
         const el = doc.getElementById('dg-key');
         if (!el || !deps.getCustomKey) return;
         deps.getCustomKey().then((k) => { if (el.isConnected && !el.value) el.placeholder = k ? tr('saved — type to replace', 'diegetic.panel.source.keySaved') : `sk-… (${tr('stored in the browser', 'diegetic.panel.source.keyStoredIn')})`; }).catch(() => {});
+    };
+    // Allowed plain-HTTP origins: visible and removable from the panel.
+    const renderAllowList = () => {
+        const box = doc.getElementById('dg-allowlist');
+        if (box) box.innerHTML = allowListHtml(deps.getAllowList?.() ?? []);
     };
 
     // ── Редактор шаблонов: список + edit-on-place ──
@@ -965,6 +981,11 @@ export function mountPanel(deps) {
     $(doc).on('change.diegetic', '#dg-ext #dg-extrabody', function () {
         const res = deps.setCustomExtraBody?.(String($(this).val() || ''));
         if (res && !res.ok) globalThis.toastr?.error(`Diegetic: ${res.error}`);
+    });
+    // Remove an origin from the allowlist (the ✕ row beside its address).
+    $(doc).on('click.diegetic', '#dg-ext [data-allow-del]', (e) => {
+        deps.removeAllowOrigin?.(String($(e.currentTarget).attr('data-allow-del') ?? ''));
+        renderAllowList();
     });
     // Числовые поля: мусор/выход за диапазон приводим к сохранённому значению
     // сразу на месте (Б33), а не после перерендера панели.

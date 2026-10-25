@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { normalizeIntrinsicHeight, ensureMsgButtons, initRender, shutdownRender, withSlotControls, withImmersiveCss } from '../src/render.js';
+import { normalizeIntrinsicHeight, ensureMsgButtons, initRender, shutdownRender, withSlotControls, withImmersiveCss, reconcile } from '../src/render.js';
 
 const renderSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'render.js'), 'utf8');
 
@@ -202,6 +202,33 @@ test('кнопка поста читает mesid в момент клика, а 
 // абзацы — разные узлы; locateBlock давал null и оболочка молча не монтировалась.
 import { resolveMountBlock } from '../src/render.js';
 
+test('reconcile after shutdownRender is a full no-op — the DOM is untouched', () => {
+    // disable × prepareChat-tail race: a late reconcile put the shells and
+    // ◆/📷 buttons removed by shutdownRender back (still wired: _deps alive).
+    globalThis.window = { addEventListener() {}, removeEventListener() {} };
+    let chatQueries = 0;
+    const chatEl = { querySelectorAll: () => { chatQueries++; return []; } };
+    globalThis.document = {
+        getElementById: (id) => (id === 'chat' ? chatEl : null),
+        addEventListener() {}, removeEventListener() {},
+        createElement: () => makeEl(),
+        querySelectorAll: () => [],
+        body: makeEl('body'),
+    };
+    globalThis.MutationObserver = class { observe() {} disconnect() {} };
+    try {
+        initRender({ settings: () => ({ buttonMode: 'post', imageMode: 'off' }), run() {} });
+        shutdownRender();
+        chatQueries = 0;
+        reconcile();
+        assert.equal(chatQueries, 0, 'после disable reconcile не ходит по .mes');
+    } finally {
+        delete globalThis.window;
+        delete globalThis.document;
+        delete globalThis.MutationObserver;
+    }
+});
+
 const textEl = { tagName: 'DIV', textContent: 'весь пост' };
 const blocks = [
     { tagName: 'P', textContent: 'Первый абзац кончается этими словами.' },
@@ -236,6 +263,23 @@ test('Б1: CMD_SNIPPET слушает Esc внутри артефакта и ш�
 test('Б28: watchdog — 4 c и не более одной перезагрузки на монтаж', () => {
     assert.ok(renderSrc.includes(', 4000)'), 'порог поднят с 2.5 c');
     assert.ok(renderSrc.includes('dgReloaded'), 'флаг однократной перезагрузки');
+});
+
+test('discardFrame revokes the blob:URL once, survives repeats and garbage', async () => {
+    const { discardFrame } = await import('../src/render.js');
+    const revoked = [];
+    const orig = URL.revokeObjectURL;
+    URL.revokeObjectURL = (u) => revoked.push(u);
+    try {
+        const frame = { dataset: { dgBlob: 'blob:diegetic-1' } };
+        discardFrame(frame);
+        discardFrame(frame);   // second call — the URL is already out of dataset
+        discardFrame(null);    // garbage input
+        assert.deepEqual(revoked, ['blob:diegetic-1']);
+        assert.equal(frame.dataset.dgBlob, undefined, 'ссылка на blob снята');
+    } finally {
+        URL.revokeObjectURL = orig;
+    }
 });
 
 test('Б34/Б18/Б38/Б2/Б3/Б14: source-ассерты фиксов волны P1', () => {
@@ -273,4 +317,14 @@ test('Б34-регресс: baseKeyOfKey отрезает и старый, и л�
     assert.equal(baseKeyOfKey(null), '', 'мусорный вход не падает');
     // в onDocumentClick больше нет регекс-обрезки (она и ломала expand на мобиле)
     assert.ok(!renderSrc.includes('_expanded.add(String(key)') && !renderSrc.includes('_expanded.delete(String(key)'), 'обрезка идёт через baseKeyOfKey, а не регекс');
+});
+
+test('artifact html digest is cached per object; a copy with new html re-hashes', async () => {
+    const { htmlDigest } = await import('../src/render.js');
+    const { contentDigest } = await import('../src/digest.js');
+    const a = { id: 'x:0', html: '<body><p>телефон</p></body>' };
+    assert.equal(htmlDigest(a), contentDigest(a.html));
+    assert.equal(htmlDigest(a), contentDigest(a.html), 'повторное чтение — из кэша, значение то же');
+    const copy = { ...a, html: '<body><p>другое</p></body>' };
+    assert.equal(htmlDigest(copy), contentDigest('<body><p>другое</p></body>'), 'спред-копия с новым html не делит кэш');
 });

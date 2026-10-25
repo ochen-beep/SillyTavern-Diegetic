@@ -9,7 +9,7 @@
 // Кнопки поста — в штатном ряду .mes_buttons:
 // ◆ сгенерировать/перегенерировать, 📷 заполнить фотослоты (режим «по кнопке»).
 
-import { getMessage, persistChat } from './host.js';
+import { getMessage } from './host.js';
 import { parseImageSlots, slotCardId, SLOT_ATTR } from './images.js';
 import {
     readVerifiedPayload, readRawPayload, writePayload, clearPayload,
@@ -158,7 +158,16 @@ const _imgCache = new Map();
  *  Рядом чистится кэш высот (Б34): ключи оболочек имеют смысл только в своём чате. */
 export function clearImageCache() { _imgCache.clear(); _heightCache.clear(); }
 
-const baseKey = (a) => `${a.id}|${contentDigest(a.html)}`;
+// An artifact's html is immutable (every mutation is a spread-copy — see
+// pipeline/rebind/fill), so its digest is computed once per object and kept
+// in a WeakMap: a full reconcile no longer hashes the whole chat's HTML.
+const _digestCache = new WeakMap();
+export const htmlDigest = (a) => {
+    let d = _digestCache.get(a);
+    if (d === undefined) { d = contentDigest(a.html); _digestCache.set(a, d); }
+    return d;
+};
+const baseKey = (a) => `${a.id}|${htmlDigest(a)}`;
 // Полный ключ оболочки: id|digest|open/closed|lazy/eager. id и digest не
 // содержат '|', поэтому baseKey из полного ключа — первые два сегмента.
 // Регресс Б48 (потомок Б34): обрезка старым регексом /\|[oc]$/ не цепляла
@@ -227,6 +236,21 @@ function mountFrameInShell(shell) {
     else shell.prepend(frame);
 }
 
+/** Drop a frame releasing its blob:URL. Without the revoke a long session
+ *  with lazy frames stockpiles one blob of HTML per remount/removal. */
+export function discardFrame(frame) {
+    const url = frame?.dataset?.dgBlob;
+    if (!url) return;
+    delete frame.dataset.dgBlob;
+    try { URL.revokeObjectURL(url); } catch { /* уже отозван */ }
+}
+
+/** Drop the frame(s) of a shell and the shell itself. */
+function discardShell(shell) {
+    discardFrame(shell?.querySelector?.(`iframe.${FRAME_CLASS}`));
+    shell?.remove?.();
+}
+
 /** Снять iframe, оставив плейсхолдер той же высоты (скролл не прыгает). */
 function unmountToPlaceholder(shell) {
     const frame = shell.querySelector(`iframe.${FRAME_CLASS}`);
@@ -236,6 +260,7 @@ function unmountToPlaceholder(shell) {
     const ph = document.createElement('div');
     ph.className = 'dg-lazy';
     ph.style.height = `${Math.max(40, Math.round(h))}px`;
+    discardFrame(frame);
     frame.replaceWith(ph);
 }
 
@@ -576,14 +601,14 @@ export function deleteArtifact(msgId, artifactId) {
     const undo = stashForUndo(msg, swipeIdx, payload);
     if (rest.length) writePayload(msg, swipeIdx, { ...payload, artifacts: rest });
     else clearPayload(msg, swipeIdx);
-    persistChat();
+    // The chat file is unchanged here (the dg_id existed — the payload was
+    // readable) — no persist, the store persists itself.
     reconcileMessage(msgId);
     if (undo) {
         globalThis.toastr?.success(tr('Diegetic: artifact deleted — click here to undo', 'diegetic.toast.deleted'), 'Diegetic', {
             timeOut: 10_000,
             onclick: () => {
                 if (undo()) {
-                    persistChat();
                     reconcile();
                     globalThis.toastr?.success(tr('Diegetic: deletion undone — artifact restored', 'diegetic.toast.deleteUndone'));
                 }
@@ -600,6 +625,7 @@ function closePopup() {
             // вьюпорт без window.resize — contain надо пересчитывать и тут.
             globalThis.visualViewport?.removeEventListener?.('resize', _popup.onResize);
         }
+        discardFrame(_popup.frame);
         _popup.el.remove();
         _popup = null;
     }
@@ -835,7 +861,6 @@ export function setGenerating(on) {
 function rebindPayload(msg, swipeIdx, raw) {
     if (payloadBelongsToOtherVariant(msg, swipeIdx, raw)) {
         clearPayload(msg, swipeIdx);
-        persistChat();
         return null;
     }
     const prose = variantText(msg, swipeIdx);
@@ -848,7 +873,8 @@ function rebindPayload(msg, swipeIdx, raw) {
         return { ...a, status: 'orphan' };
     });
     const next = { ...raw, contentDigest: digestForVariant(msg, swipeIdx), artifacts };
-    return writePayload(msg, swipeIdx, next) && (persistChat(), next);
+    // Rebind changes only the store — the chat file is untouched.
+    return writePayload(msg, swipeIdx, next) && next;
 }
 
 function reconcileMes(mesEl) {
@@ -858,7 +884,7 @@ function reconcileMes(mesEl) {
     if (!Number.isFinite(msgId)) return;
     let shells = [...mesEl.querySelectorAll(`[${SHELL_ATTR}]`)];
     const msg = getMessage(msgId);
-    if (!msg) { shells.forEach(s => s.remove()); return; }
+    if (!msg) { shells.forEach(discardShell); return; }
     ensureMsgButtons(mesEl, msgId, msg);
     const swipeIdx = msg.swipe_id ?? 0;
     let payload = readVerifiedPayload(msg, swipeIdx);
@@ -875,7 +901,7 @@ function reconcileMes(mesEl) {
     const textEl = mesEl.querySelector('.mes_text');
     if (!textEl) return;
     for (const s of shells) {
-        if (!desired.has(s.getAttribute(SHELL_ATTR))) s.remove();
+        if (!desired.has(s.getAttribute(SHELL_ATTR))) discardShell(s);
     }
     const have = new Set([...mesEl.querySelectorAll(`[${SHELL_ATTR}]`)].map(s => s.getAttribute(SHELL_ATTR)));
     const blocks = blocksOf(textEl);
@@ -924,7 +950,10 @@ function ensureObserver() {
 }
 
 export function reconcile({ only = null } = {}) {
-    if (typeof document === 'undefined') return;
+    // Without the guard, a late reconcile from the tail of prepareChat put the
+    // shells and ◆/📷 buttons (still wired!) back into a chat after disable —
+    // shutdownRender had just removed them.
+    if (typeof document === 'undefined' || !_active) return;
     ensureObserver();
     const scope = document.getElementById('chat');
     if (!scope) return;
@@ -1086,7 +1115,7 @@ export function shutdownRender() {
     _expanded.clear();
     _imgCache.clear();
     if (typeof document !== 'undefined') {
-        document.querySelectorAll(`[${SHELL_ATTR}]`).forEach(s => s.remove());
+        document.querySelectorAll(`[${SHELL_ATTR}]`).forEach(discardShell);
         document.querySelectorAll('.dg-gen-btn, .dg-photo-btn').forEach(b => b.remove());
     }
 }

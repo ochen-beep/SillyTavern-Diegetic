@@ -52,6 +52,16 @@ test('happy path: payload записан в store, текст не тронут,
     assert.ok(notifications.some(([k]) => k === 'ready'));
 });
 
+test('chat saved exactly once — for creating the dg_id, not per store write', async () => {
+    const { deps, stats } = makeDeps();
+    await createPipeline(deps).run(0);
+    assert.equal(stats().saved, 1, 'первый артефакт сообщения: dg_id создан → сохранено');
+    // Regenerating the same post: the dg_id already exists (and is already
+    // in the chat file) — no more full chat save, the store persists itself.
+    await createPipeline(deps).run(0, { force: true });
+    assert.equal(stats().saved, 1, 'перегенерация чат не сохраняет');
+});
+
 test('мусорный ответ: payload не записан, тост ошибки', async () => {
     const { deps, msg, notifications } = makeDeps({ raw: 'мусор' });
     await createPipeline(deps).run(0);
@@ -221,13 +231,14 @@ const SLOT_ART = '<body><div class="photo" data-dg-img="img: old prompt" style="
 const seedSlotPayload = (msg) => writePayload(msg, 0, stampPayload(msg, 0,
     [{ id: 'd:0', type: 'photo', anchor: 'взяла телефон', status: 'ok', html: SLOT_ART, bytes: SLOT_ART.length, createdAt: 1, profileId: 'default' }]));
 
-test('updateSlotPrompt: промпт переписан, persist+render, без регенерации — просто запись', async () => {
+test('updateSlotPrompt: prompt rewritten, render without persist (chat unchanged)', async () => {
     const { deps, msg, stats } = makeDeps();
     seedSlotPayload(msg);
     await createPipeline(deps).updateSlotPrompt(0, 'd:0', 0, { trigger: 'scene', desc: 'rain over the pier', regenerate: false });
     const out = readVerifiedPayload(msg, 0).artifacts[0].html;
     assert.ok(out.includes('data-dg-img="scene: rain over the pier"'));
-    assert.ok(stats().saved >= 1 && stats().rendered >= 1);
+    assert.equal(stats().saved, 0, 'чат не сохраняется — стор пишет себя сам');
+    assert.ok(stats().rendered >= 1);
 });
 
 test('updateSlotPrompt: regenerate=true идёт в URIS-мост и меняет фото', async () => {

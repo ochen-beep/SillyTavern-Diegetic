@@ -205,3 +205,15 @@ test('urisStatus: ready висит → по таймауту available, но н�
         t.mock.timers.reset();
     }
 });
+
+test('parseImageSlots: degenerate tag storm parses linearly', () => {
+    // The old tokenizer backtracked exponentially on '<A -=' plus repeated '"" -='.
+    const storm = '<A -="" ' + '"" -="" '.repeat(20_000);
+    const html = `<div data-dg-img="scene: rain"></div>${storm}<div data-dg-img="img: pier"></div>`;
+    const t0 = Date.now();
+    const slots = parseImageSlots(html);
+    assert.equal(slots.length, 2, 'well-formed slots around the storm survive');
+    assert.equal(slots[0].desc, 'rain');
+    assert.equal(slots[1].desc, 'pier');
+    assert.ok(Date.now() - t0 < 2000, `linear parse (took ${Date.now() - t0} ms)`);
+});

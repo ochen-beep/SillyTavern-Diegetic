@@ -11,10 +11,13 @@ export const SLOT_CARD_ATTR = 'data-dg-card';
 export const SLOT_STATES = Object.freeze(['loading', 'done', 'error']);
 export const BRIDGE_CALLER = 'sthtml';
 
-// Токенизатор открывающих тегов: значения атрибутов в кавычках обходятся целиком,
-// поэтому '>' внутри style="…" слот не ломает. Кавычки внутри значения data-dg-img
-// запрещены контрактом (см. contract.js) — для него хватает "([^"]*)".
-const TAG_RE = /<[a-zA-Z][\w-]*(?:\s+[\w-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*\s*\/?>/g;
+// Opening-tag tokenizer: quoted attribute values are consumed whole, so a '>'
+// inside style="…" does not break a slot. Each iteration eats at least one char
+// and the branches are disjoint on the first char (quote / non-quote), so the
+// match is linear — a degenerate tag cannot blow up with backtracking.
+// Quotes inside an unquoted value no longer match: the slot writer always
+// double-quotes its values, and a tag that malformed was not well-formed.
+const TAG_RE = /<[a-zA-Z](?:"[^"]*"|'[^']*'|[^>"'])*>/g;
 
 function attrValue(tag, name) {
     const m = new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`, 'i').exec(tag);

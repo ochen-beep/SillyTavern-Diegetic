@@ -31,12 +31,10 @@ test('withImmersiveCss: фрагмент без html/head — CSP-мета и CS
 test('withImmersiveCss: CSP закрывает сеть, но оставляет inline и шрифты Google (Б17)', () => {
     const out = withImmersiveCss('<p>x</p>');
     const csp = /content="([^"]+)"/.exec(out)?.[1] ?? '';
-    assert.ok(csp.includes('connect-src data: blob:'), 'fetch/XHR наружу запрещён (только data:/blob:)');
-    assert.ok(csp.includes("frame-src 'none'"), 'вложенные фреймы запрещены');
-    assert.ok(csp.includes("object-src 'none'"), 'плагинные объекты запрещены');
-    assert.ok(csp.includes("base-uri 'none'"), 'базовая подмена URI запрещена');
-    assert.ok(csp.includes("script-src 'unsafe-inline'"), 'inline-скрипты артефакта живы');
-    assert.ok(csp.includes('https://fonts.googleapis.com'), 'шрифты шаблона universal.md не сломаны');
+    // Exact match instead of substring checks (CodeQL reads `.includes('https://…')`
+    // as URL sanitization): the CSP is a security boundary — any drift must be
+    // a deliberate edit of the constant in render.js.
+    assert.equal(csp, "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob:; media-src data: blob:; connect-src data: blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'");
 });
 
 test('normalizeIntrinsicHeight: vh-ловушки высоты срезаются в auto', () => {

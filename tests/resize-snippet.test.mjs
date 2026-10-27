@@ -12,7 +12,9 @@ const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'sr
 const m = src.match(/const RESIZE_SNIPPET =([\s\S]*?\+\s*'script>';)/);
 assert.ok(m, 'RESIZE_SNIPPET найден');
 const snippet = eval(m[1]);
-const body = snippet.replace(/^<script>/, '').replace(/<\/script>$/, '');
+// Plain slices instead of a tag-stripping regexp (CodeQL flags tag-filter
+// regexps as sanitizer-shaped): the wrapper is our own constant.
+const body = snippet.slice('<script>'.length, snippet.length - '</script>'.length);
 
 /** Мок окна/документа iframe: zoom меняет layout (scrollWidth/scrollHeight),
  *  transform — только rect. clientWidth фиксируем (колонка чата). */

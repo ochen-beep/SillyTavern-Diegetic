@@ -111,30 +111,3 @@ test('custom: аборт внешнего сигнала рвёт fetch и да�
         delete globalThis.fetch;
     }
 });
-
-test('custom: таймаут 5 мин — не AbortError пользовательской отмены, а понятный сбой', async () => {
-    let aborted = false;
-    globalThis.SillyTavern = { getContext: () => ({ substituteParams: (s) => s }) };
-    globalThis.fetch = async (_url, opts) => new Promise((_, rej) => {
-        const fail = () => { aborted = true; rej(opts.signal.reason); };
-        if (opts.signal.aborted) { fail(); return; }
-        opts.signal.addEventListener('abort', fail);
-    });
-    // Подменить 5 минут на 20мс: таймер — деталь реализации, проверяем семантику
-    const origSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = (fn, ms) => origSetTimeout(fn, Math.min(ms, 20));
-    try {
-        await assert.rejects(
-            generateText({
-                system: 'S', user: 'U',
-                profile: { source: 'custom', sourceConfig: { apiurl: 'http://127.0.0.1:9/v1' } },
-            }),
-            /5 min timeout/,
-        );
-        assert.equal(aborted, true);
-    } finally {
-        delete globalThis.SillyTavern;
-        delete globalThis.fetch;
-        globalThis.setTimeout = origSetTimeout;
-    }
-});

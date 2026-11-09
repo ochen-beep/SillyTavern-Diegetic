@@ -185,7 +185,6 @@
     "diegetic.host.customInsecure": "custom endpoint: plain-HTTP вне localhost запрещён — подтверди «{origin}» в настройках источника",
     "diegetic.host.customExtraNotJson": "custom endpoint: «Доп. параметры» — не JSON",
     "diegetic.host.customExtraNotObject": "custom endpoint: «Доп. параметры» — должен быть JSON-объект",
-    "diegetic.host.customTimeout": "custom endpoint: таймаут 5 мин",
     "diegetic.host.customHttp": "custom endpoint: HTTP {status}",
     "diegetic.host.customNoText": "custom endpoint: не удалось извлечь текст из ответа",
     "diegetic.host.customNetwork": "custom endpoint: {msg} — сервер не ответил. Проверь URL и CORS-политику: сервер должен отдавать Access-Control-Allow-Origin для запросов из браузера",

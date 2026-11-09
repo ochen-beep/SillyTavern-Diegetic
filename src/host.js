@@ -86,7 +86,6 @@ async function generateViaCustom({ system, user, profile, signal }) {
         if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error(tr('custom endpoint: «Extra params» — must be a JSON object', 'diegetic.host.customExtraNotObject'));
     }
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(new Error(tr('custom endpoint: 5 min timeout', 'diegetic.host.customTimeout'))), 300_000);
     // Отмена могла прийти, пока шли await'ы выше (ключ, шаблон, контекст):
     // слушатель на уже-аборченном сигнале не сработает — проверяем состояние.
     const onAbort = () => ctrl.abort(signal.reason);
@@ -117,7 +116,6 @@ async function generateViaCustom({ system, user, profile, signal }) {
         }
         throw e;
     } finally {
-        clearTimeout(timer);
         signal?.removeEventListener('abort', onAbort);
     }
 }

@@ -71,6 +71,20 @@ function runSnippet(mock) {
         .call(mock.win, mock.win, mock.win.document, mock.win.parent,
             (type, fn) => mock.win.addEventListener(type, fn), undefined, undefined);
 }
+
+/** Вариант с настоящими стабами наблюдателей: сниппет получает классы,
+ *  тест — ссылки на их колбэки (мутационный шторм из артефакта). */
+function runSnippetObserved(mock) {
+    const observers = { ro: [], mo: [] };
+    class RO { constructor(cb) { observers.ro.push(cb); } observe() {} }
+    class MO { constructor(cb) { observers.mo.push(cb); } observe() {} }
+    new Function('window', 'document', 'parent', 'addEventListener', 'MutationObserver', 'ResizeObserver',
+        body)
+        .call(mock.win, mock.win, mock.win.document, mock.win.parent,
+            (type, fn) => mock.win.addEventListener(type, fn), MO, RO);
+    return observers;
+}
+const flush = (ms) => new Promise((r) => setTimeout(r, ms));
 const fire = (mock, type, ev = {}) => (mock.listeners[type] ?? []).forEach((fn) => fn(ev));
 /** Прикладной масштаб: zoom-ветка пишет в style.zoom, transform-ветка — в style.transform. */
 const applied = (mock) => {
@@ -123,4 +137,26 @@ test('contain: лайтбоксный бокс ужимает сцену и по
     fire(mock, 'message', { data: { __dgContain: { w: 380, h: 0 } } });
     for (let i = 0; i < 3; i++) fire(mock, 'resize');
     assert.ok(Math.abs(applied(mock) - 380 / 680) < 0.01, `обратно к фиту по ширине, получено ${applied(mock)}`);
+});
+
+test('шторм мутаций: гейт по высоте и коалесинг в окно 150 мс', async () => {
+    const mock = mockFrame({ clientWidth: 380, contentW: 680, contentH: 440 });
+    const obs = runSnippetObserved(mock);
+    fire(mock, 'load');
+    const base = mock.state.posts.length;
+    // 60 «кадров» самоанимации с НЕизменной высотой: гейт — ни одного поста
+    for (let i = 0; i < 60; i++) obs.mo[0]([], mock.win.document);
+    await flush(250);
+    assert.equal(mock.state.posts.length, base, 'неизменная высота — постов нет');
+
+    // высота реально меняется на каждом «кадре»: 20 мутаций подряд быстрее окна
+    // коалирования → максимум один пост (плюс возможный хвост первого окна)
+    const body = mock.win.document.body;
+    let h2 = 440;
+    Object.defineProperty(body, 'scrollHeight', { get: () => h2, configurable: true });
+    Object.defineProperty(body, 'getBoundingClientRect', { value: () => ({ width: 680, height: h2 }), configurable: true });
+    for (let i = 0; i < 20; i++) { h2 += 10; obs.mo[0]([], mock.win.document); }
+    await flush(250);
+    const grew = mock.state.posts.length - base;
+    assert.ok(grew >= 1 && grew <= 2, `20 растущих мутаций → ${grew} пост(ов), ожидалось 1-2`);
 });

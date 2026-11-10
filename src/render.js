@@ -92,13 +92,19 @@ const RESIZE_SNIPPET = '<script>(function(){var K=1,N=0,NH=0,BX=0,BY=0;var Z=doc
     + 'var m=function(){var b=document.body;if(!b)return document.documentElement.scrollHeight;'
     + 'return Z?Math.max(b.getBoundingClientRect().height,b.scrollHeight)'
     + ':Math.max(b.getBoundingClientRect().height,b.scrollHeight*K)};'
-    + 'var p=function(){fit();try{parent.postMessage({__dgH:m()},"*")}catch(e){}};'
+    + 'var H=0,T=null;'
+    // Самоанимирующиеся артефакты (tilt/canvas/часы) мутируют style на каждом
+    // кадре — Firefox таймеры sandbox-iframe не зажимает. Отчёт — только при
+    // реальной смене высоты (иначе шторм postMessage + layout на каждую мутацию),
+    // наблюдатели коалируются в одно окно 150 мс.
+    + 'var p=function(){fit();var h=m();if(H>0&&Math.abs(h-H)<1)return;H=h;try{parent.postMessage({__dgH:h},"*")}catch(e){}};'
+    + 'var kick=function(){if(T)return;T=setTimeout(function(){T=null;fix();p()},150)};'
     // Лайтбокс шлёт доступный бокс {w,h}: contain — вся сцена влезает без
     // обрезки по краям. Повторная отправка при повороте/ресайзе окна.
     + 'addEventListener("message",function(e){var d=e&&e.data;if(d&&d.__dgContain){BX=d.__dgContain.w||0;BY=d.__dgContain.h||0;p()}});'
     + 'var fix=function(){document.querySelectorAll("[style*=vh]").forEach(function(el){var s=el.getAttribute("style");var t=String(s).replace(/(min-height|max-height|height)\\s*:\\s*[\\d.]+(?:s|l|d)?vh/gi,"$1:auto");if(t!==s)el.setAttribute("style",t)})};'
-    + 'if(typeof ResizeObserver!=="undefined"){new ResizeObserver(p).observe(document.body)}'
-    + 'if(typeof MutationObserver!=="undefined"){new MutationObserver(function(){fix();p()}).observe(document.documentElement,{attributes:true,attributeFilter:["style"],subtree:true})}'
+    + 'if(typeof ResizeObserver!=="undefined"){new ResizeObserver(kick).observe(document.body)}'
+    + 'if(typeof MutationObserver!=="undefined"){new MutationObserver(kick).observe(document.documentElement,{attributes:true,attributeFilter:["style"],subtree:true})}'
     + 'addEventListener("load",p);addEventListener("resize",p);fix();p()})()</' + 'script>';
 // Клики внутри sandbox-iframe (opaque origin) до родительского document не доходят —
 // команды контролов (✎/⟳) уходят postMessage'ом, по образцу рукопожатия высоты.
@@ -1026,9 +1032,21 @@ export function initRender(deps = {}) {
     // Отладочный хук (стенд): window.__diegetic.reconcile() вручную.
     try { globalThis.__diegetic = { reconcile, setGenerating, deps: () => _deps }; } catch { /* не критично */ }
     if (!_onMessage) {
+        // Б18: флуд {__dgH} на каждое сообщение ставил style.height = сотни
+        // layout/с. Применяем ПОСЛЕДНЮЮ высоту не чаще кадра — и для инлайна,
+        // и для лайтбокса (диалог попапа тоже sizing-элемент над iframe).
         let _hRafPending = false;
-        let _hRafFrame = null;
-        let _hRafValue = 0;
+        let _hRafApply = null;
+        const scheduleHeight = (fn) => {
+            _hRafApply = fn;
+            if (_hRafPending) return;
+            _hRafPending = true;
+            requestAnimationFrame(() => {
+                _hRafPending = false;
+                _hRafApply?.();
+                _hRafApply = null;
+            });
+        };
         _onMessage = (e) => {
             const h = e?.data?.__dgH;
             if (typeof h === 'number') {
@@ -1037,7 +1055,9 @@ export function initRender(deps = {}) {
                 if (_popup?.frame?.contentWindow === e.source) {
                     _popup.frame.dataset.dgHSeen = '1';
                     const dlg = _popup.el.querySelector('.dg-popup-dialog');
-                    if (dlg) dlg.style.height = `${Math.min(clampH(h) + 40, Math.round(window.innerHeight * 0.86))}px`;
+                    if (!dlg) return;
+                    const val = Math.min(clampH(h) + 40, Math.round(window.innerHeight * 0.86));
+                    scheduleHeight(() => { if (dlg.isConnected) dlg.style.height = `${val}px`; });
                     return;
                 }
                 for (const f of document.querySelectorAll(`iframe.${FRAME_CLASS}`)) {
@@ -1045,21 +1065,8 @@ export function initRender(deps = {}) {
                         f.dataset.dgHSeen = '1';
                         const shellKeyAttr = f.closest(`[${SHELL_ATTR}]`)?.getAttribute(SHELL_ATTR);
                         if (shellKeyAttr) _heightCache.set(shellKeyAttr, clampH(h));
-                        // Б18: флуд {__dgH} (1044 сооб./2 c в прогоне) на каждое
-                        // сообщение ставил style.height = сотни layout/с.
-                        // Применяем ПОСЛЕДНЮЮ высоту не чаще кадра.
-                        if (typeof requestAnimationFrame === 'function') {
-                            _hRafValue = clampH(h);
-                            _hRafFrame = f;
-                            if (_hRafPending) return;
-                            _hRafPending = true;
-                            requestAnimationFrame(() => {
-                                _hRafPending = false;
-                                if (_hRafFrame?.isConnected) _hRafFrame.style.height = `${_hRafValue}px`;
-                            });
-                        } else {
-                            f.style.height = `${clampH(h)}px`;
-                        }
+                        const val = clampH(h);
+                        scheduleHeight(() => { if (f.isConnected) f.style.height = `${val}px`; });
                         break;
                     }
                 }

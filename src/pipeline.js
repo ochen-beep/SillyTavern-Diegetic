@@ -266,6 +266,13 @@ export function createPipeline(deps) {
                 if (!mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, 'loading'))) return;
                 try {
                     const res = await generateSlotImage(slot, { quality: s.imageQuality, imageSize: '1K', signal: run.ctrl.signal });
+                    if (run.canceled) {
+                        // Мост проигнорировал сигнал и всё же принёс фото: пользователь
+                        // отказался — платный результат не вписываем (как run.canceled
+                        // у генерации), слот назад в pending.
+                        mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, null));
+                        return;
+                    }
                     const ok = mutateArtifact(baseDigest, aid, (html) =>
                         replaceSlotImage(html, slot.ordinal, res.imagePath, res.cardId)
                         ?? injectSlotImage(html, slot.ordinal, res.imagePath, res.cardId));

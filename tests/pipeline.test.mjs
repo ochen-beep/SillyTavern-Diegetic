@@ -293,6 +293,26 @@ test('fillImageSlots: аборт прогона (свайп/правка) отм
     } finally { delete globalThis.URIS; }
 });
 
+test('fillImageSlots: мост игнорирует abort — canceled-гард не даст вписать позднее фото', async () => {
+    const { deps, msg } = makeDeps();
+    seedSlotPayload(msg);
+    globalThis.URIS = {
+        ready: Promise.resolve(),
+        // Сигнал не слушает: resolve после аборта — как реальный игнорирующий транспорт
+        generate: async () => ({ imagePath: 'user/images/late.png', cardId: 'card-late' }),
+        removeCard: async () => {},
+    };
+    try {
+        const p = createPipeline(deps);
+        const fill = p.fillImageSlots(0);
+        deps.coordinator.abortKind(msg.extra.dg_id, 'fill'); // ⏹ на слоте
+        await fill;
+        const html = readVerifiedPayload(msg, 0).artifacts[0].html;
+        assert.ok(!html.includes('user/images/late.png'), 'позднее фото не вписано');
+        assert.ok(!html.includes('data-dg-img-state'), 'слот сброшен из loading');
+    } finally { delete globalThis.URIS; }
+});
+
 // ── Смена текста за время генерации: ответ спасается, а не выбрасывается ──
 
 test('устаревший прогон без смены текста: ответ спасён и показан', async () => {

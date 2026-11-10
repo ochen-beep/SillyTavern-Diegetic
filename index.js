@@ -309,20 +309,26 @@ async function init(isCancelled = () => false) {
         storeStatus,
         retryStore: retryWrite,
         // Б36: сухой запрос к источнику — «Проверить подключение» до первого поста.
+        // Кнопка без окна отмены — свой таймаут: молчащий сервер не вешает «Testing…».
         testSource: async () => {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 60_000);
             try {
                 const profile = getSourceProfile();
                 const text = await generateText({
                     system: 'You are a connection test. Reply with exactly: OK',
                     user: 'Reply with exactly: OK',
                     profile,
-                    signal: undefined,
+                    signal: ctrl.signal,
                 });
                 return typeof text === 'string' && text.trim().length > 0
                     ? { ok: true, error: null }
                     : { ok: false, empty: true, error: null };
             } catch (e) {
+                if (e?.name === 'AbortError') return { ok: false, error: tr('no reply in 60 s — the server did not answer', 'diegetic.host.testTimeout') };
                 return { ok: false, error: e?.message || String(e) };
+            } finally {
+                clearTimeout(timer);
             }
         },
         setMaxPerMessage: (v) => { settings.maxPerMessage = Number(v); save(); },

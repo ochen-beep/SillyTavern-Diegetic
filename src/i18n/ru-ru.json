@@ -188,5 +188,6 @@
     "diegetic.host.customHttp": "custom endpoint: HTTP {status}",
     "diegetic.host.customNoText": "custom endpoint: не удалось извлечь текст из ответа",
     "diegetic.host.customNetwork": "custom endpoint: {msg} — сервер не ответил. Проверь URL и CORS-политику: сервер должен отдавать Access-Control-Allow-Origin для запросов из браузера",
+    "diegetic.host.testTimeout": "нет ответа за 60 с — сервер не ответил",
     "diegetic.policy.confirmDenied": "подтверждение не дано"
 }

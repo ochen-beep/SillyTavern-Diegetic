@@ -265,6 +265,7 @@ async function init(isCancelled = () => false) {
             if (d) { d.exclusions = String(text); saveChatData(); }
         },
         setImageMode: (v) => { settings.imageMode = v; save(); reconcile(); },
+        setStream: (v) => { settings.stream = !!v; save(); },
         setImageQuality: (v) => { settings.imageQuality = v; save(); },
         setDisplayMode: (v) => { settings.displayMode = v; save(); reconcile(); },
         getAppearance: () => settings.appearance,
@@ -320,6 +321,7 @@ async function init(isCancelled = () => false) {
                     user: 'Reply with exactly: OK',
                     profile,
                     signal: ctrl.signal,
+                    stream: settings.stream,
                 });
                 return typeof text === 'string' && text.trim().length > 0
                     ? { ok: true, error: null }

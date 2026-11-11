@@ -52,6 +52,20 @@ test('happy path: payload записан в store, текст не тронут,
     assert.ok(notifications.some(([k]) => k === 'ready'));
 });
 
+test('тумблер стриминга доезжает до generateText', async () => {
+    let seen = null;
+    const { deps } = makeDeps();
+    deps.generateText = async (opts) => { seen = opts; return RESP; };
+    deps.settings = { ...DEFAULT_SETTINGS, enabled: true, stream: true };
+    await createPipeline(deps).run(0);
+    assert.equal(seen.stream, true);
+    const { deps: deps2 } = makeDeps();
+    deps2.generateText = async (opts) => { seen = opts; return RESP; };
+    deps2.settings = { ...DEFAULT_SETTINGS, enabled: true, stream: false };
+    await createPipeline(deps2).run(0);
+    assert.equal(seen.stream, false);
+});
+
 test('chat saved exactly once — for creating the dg_id, not per store write', async () => {
     const { deps, stats } = makeDeps();
     await createPipeline(deps).run(0);

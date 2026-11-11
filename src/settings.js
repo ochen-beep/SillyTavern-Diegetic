@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     activeTemplate: DEFAULT_TEMPLATE,
     // Источник генерации: один выбор, без списка профилей.
     source: 'profile',         // 'profile' | 'custom' ('current' выпилен — мигрирует в 'profile')
+    stream: true,              // SSE-стриминг генерации: прокси за Cloudflare рвут долгие нестриминговые ответы (524)
     cmProfile: null,           // { profileId, profileName } — профиль Connection Manager
     custom: { apiurl: '', model: '' }, // свой endpoint; ключ — в localforage, не здесь
     customExtraBody: '',       // JSON-примесь в тело запроса (напр., отключение reasoning)
@@ -126,6 +127,7 @@ export function normalizeSettings(input) {
         templates: sanitizeTemplates(raw.templates !== undefined ? raw.templates : legacyTemplatesFromProfiles(raw)),
         activeTemplate: typeof raw.activeTemplate === 'string' && raw.activeTemplate ? raw.activeTemplate : DEFAULT_SETTINGS.activeTemplate,
         source: src,
+        stream: raw.stream === false ? false : true,
         cmProfile: src === 'profile' ? (cm ?? { profileId: '', profileName: '' }) : null,
         custom: {
             apiurl: String(customRaw.apiurl ?? ''),

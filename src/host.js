@@ -31,7 +31,7 @@ function subst(ctx, text) {
     try { return typeof ctx.substituteParams === 'function' ? ctx.substituteParams(s) : s; } catch { return s; }
 }
 
-async function generateViaCm({ system, user, profile, signal }) {
+async function generateViaCm({ system, user, profile, signal, stream }) {
     const ctx = getCtx();
     const svc = ctx?.ConnectionManagerRequestService;
     if (!svc?.sendRequest) {
@@ -48,28 +48,83 @@ async function generateViaCm({ system, user, profile, signal }) {
         }
     }
     // Доп. параметры запроса (например, отключение reasoning) — в payload.
-    let override = {};
+    // Топ-левел доходят до нативных источников ST (OpenAI и др. читают их сами),
+    // custom_include_body — обход whitelist'а сервера ST для CUSTOM-источников,
+    // где неизвестные топ-левел ключи отбрасываются до отправки провайдеру.
+    // «stream» в extraBody запрещён: им управляет тумблер, ручной stream:true
+    // сломал бы разбор SSE-ответа.
+    let extra = {};
     const extraRaw = String(profile?.sourceConfig?.extraBody ?? '').trim();
     if (extraRaw) {
-        try { override = JSON.parse(extraRaw); } catch { throw new Error(tr('«Extra params» — not JSON', 'diegetic.host.extraNotJson')); }
-        if (!override || typeof override !== 'object' || Array.isArray(override)) throw new Error(tr('«Extra params» — must be a JSON object', 'diegetic.host.extraNotObject'));
+        try { extra = JSON.parse(extraRaw); } catch { throw new Error(tr('«Extra params» — not JSON', 'diegetic.host.extraNotJson')); }
+        if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error(tr('«Extra params» — must be a JSON object', 'diegetic.host.extraNotObject'));
+        if ('stream' in extra) throw new Error(tr('«Extra params» must not set "stream" — it is controlled by the Streaming toggle', 'diegetic.host.streamForbidden'));
     }
+    const override = Object.keys(extra).length ? { ...extra, custom_include_body: extra } : {};
     let resp;
     try {
         resp = await svc.sendRequest(profileId, buildCmMessages({ system, user }), undefined,
-            { stream: false, signal: signal || null, extractData: true, includePreset: false, includeInstruct: false }, override);
+            { stream: stream === true, signal: signal || null, extractData: true, includePreset: false, includeInstruct: false }, override);
     } catch (e) {
         if (signal?.aborted || e?.name === 'AbortError' || e?.cause?.name === 'AbortError') {
             throw new DOMException('Aborted', 'AbortError');
         }
         throw new Error(tr('Profile «{name}»: {msg}', 'diegetic.host.cmProfileError').replace('{name}', profile?.sourceConfig?.profileName || profileId).replace('{msg}', cmErrorMessage(e)));
     }
-    const text = extractCmText(resp);
+    // stream:true возвращает фабрику AsyncGenerator'а (чанки несут накопленный
+    // текст); некоторые API стрим не умеют — сервис тогда отвечает объектом.
+    let text = null;
+    if (typeof resp === 'function') {
+        text = '';
+        try {
+            for await (const chunk of resp()) {
+                if (typeof chunk?.text === 'string') text = chunk.text;
+            }
+        } catch (e) {
+            // Abort может приехать уже из итерации (cancel посреди потока),
+            // когда sendRequest давно разрешён — маппим так же, как его ошибку.
+            if (signal?.aborted || e?.name === 'AbortError' || e?.cause?.name === 'AbortError') {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+            throw e;
+        }
+        if (!text) text = null;
+    } else {
+        text = extractCmText(resp);
+    }
     if (text === null) throw new Error(tr('The profile returned a reply but its text could not be extracted', 'diegetic.host.cmNoText'));
     return text;
 }
 
-async function generateViaCustom({ system, user, profile, signal }) {
+// SSE-поток OpenAI-совместимого стрима → текст. Терпит мусор диких прокси:
+// usage-чанки с пустым choices, пустые delta, reasoning_content, keep-alive
+// комментарии (': ping'), не-JSON строки; [DONE] — терминатор.
+async function readSseText(body) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let text = '';
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            if (!line.startsWith('data:')) continue;
+            const payload = line.slice(5).trim();
+            if (payload === '[DONE]') return text;
+            let json;
+            try { json = JSON.parse(payload); } catch { continue; }
+            const delta = json?.choices?.[0]?.delta;
+            if (typeof delta?.content === 'string') text += delta.content;
+        }
+    }
+    return text;
+}
+
+async function generateViaCustom({ system, user, profile, signal, stream }) {
     const sc = profile?.sourceConfig || {};
     // Политика эндпоинта: без учётных данных в URL; https — свободно, http —
     // только loopback, прочий plain-HTTP — по явному allowlist origin'ов.
@@ -84,6 +139,7 @@ async function generateViaCustom({ system, user, profile, signal }) {
     if (extraRaw) {
         try { extra = JSON.parse(extraRaw); } catch { throw new Error(tr('custom endpoint: «Extra params» — not JSON', 'diegetic.host.customExtraNotJson')); }
         if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error(tr('custom endpoint: «Extra params» — must be a JSON object', 'diegetic.host.customExtraNotObject'));
+        if ('stream' in extra) throw new Error(tr('«Extra params» must not set "stream" — it is controlled by the Streaming toggle', 'diegetic.host.streamForbidden'));
     }
     const ctrl = new AbortController();
     // Отмена могла прийти, пока шли await'ы выше (ключ, шаблон, контекст):
@@ -98,13 +154,21 @@ async function generateViaCustom({ system, user, profile, signal }) {
             body: JSON.stringify({
                 model: sc.model || undefined,
                 messages: buildCmMessages({ system, user }),
-                stream: false,
+                stream: stream === true,
                 ...extra, // например, отключение reasoning у конкретного провайдера
             }),
             signal: ctrl.signal,
         });
         if (!res.ok) throw new Error(tr('custom endpoint: HTTP {status}', 'diegetic.host.customHttp').replace('{status}', res.status));
-        const text = extractCmText(await res.json().catch(() => null));
+        // Стриминг — против таймаутов прокси (Cloudflare 524 на долгих нестриминговых
+        // ответах): текст копится из delta.content, прогрессивный вывод не нужен.
+        let text;
+        if (stream) {
+            text = await readSseText(res.body);
+            if (!text) text = null;
+        } else {
+            text = extractCmText(await res.json().catch(() => null));
+        }
         if (text === null) throw new Error(tr('custom endpoint: could not extract text from the reply', 'diegetic.host.customNoText'));
         return text;
     } catch (e) {
@@ -125,11 +189,11 @@ async function generateViaCustom({ system, user, profile, signal }) {
  * макросы подставляются здесь для всех источников. Источники: профиль
  * Connection Manager или свой endpoint; «текущий API» хоста не используется.
  */
-export async function generateText({ system, user, profile, signal }) {
+export async function generateText({ system, user, profile, signal, stream }) {
     const ctx = getCtx();
     if (!ctx) throw new Error(tr('ST context unavailable', 'diegetic.host.noCtx'));
     const sys = subst(ctx, system);
     const usr = subst(ctx, user);
-    if (profile?.source === 'custom') return generateViaCustom({ system: sys, user: usr, profile, signal });
-    return generateViaCm({ system: sys, user: usr, profile, signal });
+    if (profile?.source === 'custom') return generateViaCustom({ system: sys, user: usr, profile, signal, stream });
+    return generateViaCm({ system: sys, user: usr, profile, signal, stream });
 }

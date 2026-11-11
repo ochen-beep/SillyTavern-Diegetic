@@ -80,7 +80,7 @@ export function createPipeline(deps) {
             });
             let raw;
             try {
-                raw = await deps.generateText({ system, user, profile, signal: run.ctrl.signal });
+                raw = await deps.generateText({ system, user, profile, signal: run.ctrl.signal, stream: s.stream });
             } catch (e) {
                 if (e?.name !== 'AbortError') {
                     // Б37: «Повторить» прямо из тоста ошибки.

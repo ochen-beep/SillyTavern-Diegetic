@@ -29,6 +29,12 @@ test('источник по умолчанию — profile; legacy "current" м�
   assert.equal(s.customExtraBody, '');
 });
 
+test('stream: по умолчанию включён, сохранённый false сохраняется, мусор → true', () => {
+  assert.equal(normalizeSettings({}).stream, true, 'у старых сохранений ключа нет — включаем (прокси за CF рвут нестрим)');
+  assert.equal(normalizeSettings({ stream: false }).stream, false);
+  assert.equal(normalizeSettings({ stream: 'yes' }).stream, true);
+});
+
 test('load/save через абстрактное хранилище', () => {
   const backing = {};
   const storage = { get: () => backing.s, set: (v) => { backing.s = v; } };

@@ -646,6 +646,9 @@ export function mountPanel(deps) {
           <div class="dg-btnrow"><button class="menu_button" id="dg-test-source">${tr('Test connection', 'diegetic.panel.source.test')}</button><button class="menu_button dg-btn-primary" id="dg-save-source">${tr('Apply', 'diegetic.panel.source.apply')}</button></div>
           <div id="dg-allowlist" class="dg-fields"></div>
         </div>
+        <div class="dg-row"><label for="dg-stream">${tr('Streaming (SSE)', 'diegetic.panel.stream')}</label>
+          <span class="dg-switch"><input type="checkbox" id="dg-stream" ${st.stream ? 'checked' : ''}/><i></i></span></div>
+        <p class="dg-hint">${tr('proxies behind Cloudflare kill long non-streamed replies; disable only if the gateway cannot do SSE', 'diegetic.panel.stream.hint')}</p>
         <div class="dg-row"><label for="dg-extrabody">${tr('Extra request params (JSON)', 'diegetic.panel.extraBody')}</label>
           <input id="dg-extrabody" type="text" class="text_pole" value="${esc(deps.getCustom().extraBody)}" placeholder='{"reasoning_effort":"none"}' style="min-width:230px"/></div>
       </div>
@@ -1010,6 +1013,7 @@ export function mountPanel(deps) {
         if (!ok) el.value = deps.settings?.().contextDepth ?? 3;
     });
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-persona', (e) => deps.setCtxPersona?.(e.target.checked));
+    $(doc).on('change.diegetic', '#dg-ext #dg-stream', (e) => deps.setStream?.(e.target.checked));
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-character', (e) => deps.setCtxCharacter?.(e.target.checked));
     $(doc).on('change.diegetic', '#dg-ext #dg-ctx-world', (e) => deps.setCtxWorld?.(e.target.checked));
 

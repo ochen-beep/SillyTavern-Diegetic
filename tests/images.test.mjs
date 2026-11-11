@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
     parseImageSlots, parseSlotValue, hasPendingSlots, setSlotState,
     injectSlotImage, replaceSlotImage, publicImageSrc, urisStatus,
-    setSlotPrompt, slotCardId,
+    setSlotPrompt,
 } from '../src/images.js';
 
 const SLOT = '<div class="photo" data-dg-img="img: a cat on a windowsill" style="position:relative;height:120px"><b>ph</b></div>';
@@ -127,13 +127,6 @@ test('publicImageSrc: ведущий слэш, мусорные слэши сх�
     assert.equal(publicImageSrc('user/images/a.png'), '/user/images/a.png');
     assert.equal(publicImageSrc('//user/images/a.png'), '/user/images/a.png');
     assert.equal(publicImageSrc(''), '');
-});
-
-test('slotCardId: карточка заполненного слота, pending → null', () => {
-    const filled = injectSlotImage(`<body>${SLOT}</body>`, 0, 'user/images/a.png', 'card-1');
-    assert.equal(slotCardId(filled, 0), 'card-1');
-    assert.equal(slotCardId(`<body>${SLOT}</body>`, 0), null);
-    assert.equal(slotCardId('<body></body>', 0), null);
 });
 
 test('setSlotPrompt: переписывает значение, состояние слота не трогает', () => {

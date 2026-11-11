@@ -10,7 +10,7 @@
 // ◆ сгенерировать/перегенерировать, 📷 заполнить фотослоты (режим «по кнопке»).
 
 import { getMessage } from './host.js';
-import { parseImageSlots, slotCardId, SLOT_ATTR } from './images.js';
+import { parseImageSlots, SLOT_ATTR } from './images.js';
 import {
     readVerifiedPayload, readRawPayload, writePayload, clearPayload,
     payloadBelongsToOtherVariant, digestForVariant, variantText,
@@ -776,10 +776,7 @@ function handleSlotCmd(e) {
     if (cmd === 'slot-edit') { openSlotEditor(src.msgId, src.artifactId, ordinal); return; }
     if (cmd === 'slot-cancel') { _deps?.cancelFill?.(src.msgId); return; }
     if (cmd === 'slot-regen') {
-        const msg = getMessage(src.msgId);
-        const payload = msg ? readRawPayload(msg, msg.swipe_id ?? 0) : null;
-        const art = payload?.artifacts.find(a => a.id === src.artifactId);
-        _deps?.regenSlot?.(src.msgId, src.artifactId, ordinal, art ? slotCardId(art.html, ordinal) : null);
+        _deps?.regenSlot?.(src.msgId, src.artifactId, ordinal);
     }
 }
 

@@ -376,8 +376,8 @@ async function init(isCancelled = () => false) {
             if (dg) coordinator.abortKind(dg, 'fill');
         },
         hasPending: (id) => pipeline.hasPendingPhotoSlots(id),
-        regenSlot: (id, artifactId, ordinal, cardId) =>
-            pipeline.fillImageSlots(id, { artifactId, onlyOrdinal: ordinal, removeCardId: cardId }),
+        regenSlot: (id, artifactId, ordinal) =>
+            pipeline.fillImageSlots(id, { artifactId, onlyOrdinal: ordinal }),
         editSlotPrompt: (id, artifactId, ordinal, opts) =>
             pipeline.updateSlotPrompt(id, artifactId, ordinal, opts),
     });

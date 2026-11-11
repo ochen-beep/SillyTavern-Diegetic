@@ -14,8 +14,8 @@ import {
 } from './payload.js';
 import {
     parseImageSlots, hasPendingSlots, setSlotState,
-    injectSlotImage, replaceSlotImage, generateSlotImage, getUrisBridge,
-    setSlotPrompt, slotCardId,
+    injectSlotImage, replaceSlotImage, generateSlotImage,
+    setSlotPrompt,
 } from './images.js';
 import { stashForUndo } from './undo.js';
 import { tr } from './i18n.js';
@@ -211,10 +211,9 @@ export function createPipeline(deps) {
      * Свой прогон координатора: свайп/правка/новая генерация этого поста
      * абортят платную генерацию (сигнал доезжает до URIS-моста), слот при
      * этом сбрасывается из loading обратно в pending.
-     * opts.artifactId + opts.onlyOrdinal — точечная перегенерация одного слота;
-     * opts.removeCardId — карточка URIS прошлого фото, удаляется после успеха.
+     * opts.artifactId + opts.onlyOrdinal — точечная перегенерация одного слота.
      */
-    async function _fillImageSlots(messageId, { artifactId = null, onlyOrdinal = null, removeCardId = null } = {}) {
+    async function _fillImageSlots(messageId, { artifactId = null, onlyOrdinal = null } = {}) {
         const s = deps.settings;
         if (s.imageMode === 'off') return;
         const msg0 = deps.getMessage(messageId);
@@ -277,9 +276,10 @@ export function createPipeline(deps) {
                         replaceSlotImage(html, slot.ordinal, res.imagePath, res.cardId)
                         ?? injectSlotImage(html, slot.ordinal, res.imagePath, res.cardId));
                     if (!ok) return; // digest ушёл или слот исчез — платный результат не пишем в чужое
-                    if (removeCardId) {
-                        try { await getUrisBridge()?.removeCard(removeCardId, { caller: 'sthtml' }); } catch { /* галерея — некритично */ }
-                    }
+                    // Карточку прошлого фото из галереи URIS сознательно не удаляем
+                    // (removeCard не зовём): метаданные карточки — промпт, провенанс —
+                    // остаются доступны инструментам URIS, data-dg-card в слоте
+                    // всегда указывает на живую карточку.
                 } catch (e) {
                     if (e?.code === 'ABORTED' || e?.name === 'AbortError') {
                         mutateArtifact(baseDigest, aid, (html) => setSlotState(html, slot.ordinal, null));
@@ -307,8 +307,8 @@ export function createPipeline(deps) {
     /**
      * Правка промпта фотослота из редактора (✎ в артефакте). Тот же digest-гард,
      * что у заливки фото: readVerifiedPayload отсекает чужие/протухшие payload'ы.
-     * regenerate=true — сразу точечная перегенерация (старая карточка URIS
-     * убирается после успеха); false — слот просто ждёт 📷/auto.
+ * regenerate=true — сразу точечная перегенерация (карточка прошлого фото
+ * остаётся в галерее URIS); false — слот просто ждёт 📷/auto.
      */
     async function _updateSlotPrompt(messageId, artifactId, ordinal, { trigger = null, desc = '', regenerate = false } = {}) {
         const s = deps.settings;
@@ -330,10 +330,7 @@ export function createPipeline(deps) {
         // The chat is unchanged (the dg_id already exists) — no persist.
         deps.notifyRender?.(messageId);
         if (regenerate && s.imageMode !== 'off') {
-            await _fillImageSlots(messageId, {
-                artifactId, onlyOrdinal: ordinal,
-                removeCardId: slotCardId(nextHtml, ordinal),
-            });
+            await _fillImageSlots(messageId, { artifactId, onlyOrdinal: ordinal });
         }
     }
 

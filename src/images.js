@@ -136,14 +136,6 @@ export function injectSlotImage(text, ordinal, imagePath, cardId = null) {
 
 const SLOT_IMG_RE = /<img\b[^>]*\bdg-slot-img\b[^>]*>/;
 
-/** id карточки URIS заполненного слота (для removeCard при перегенерации). */
-export function slotCardId(text, ordinal) {
-    const slot = findSlot(text, ordinal);
-    if (!slot) return null;
-    const m = SLOT_IMG_RE.exec(String(text ?? '').slice(slot.end));
-    return m ? attrValue(m[0], SLOT_CARD_ATTR) : null;
-}
-
 /**
  * Переписать промпт слота: data-dg-img="trigger: desc" (без trigger — голое desc).
  * Пустое описание или отсутствующий слот → null. Состояние слота не трогаем:
